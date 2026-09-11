@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Bosque de Pesadilla — Escape VR</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; font-family:'Segoe UI', Tahoma, sans-serif; }
+  a-scene { width:100%; height:100%; }
+
+  #menuScreen, #gameOverScreen {
+    position: fixed; inset: 0; z-index: 50;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    padding: 3.5vh 4vw; overflow-y: auto; text-align: center;
+    background: radial-gradient(circle at 50% 15%, #0d131a 0%, #020304 70%); color: #d9e2ec;
+  }
+  #gameOverScreen { display: none; z-index: 60; }
+  #gameOverScreen h1 { font-size: clamp(36px, 8vw, 65px); letter-spacing: 8px; margin-bottom: 15px; text-shadow: 0 0 15px rgba(238, 243, 251, 0.2); color: #eef3fb; font-weight: 300; text-transform: uppercase; }
+  #menuScreen h1 { font-weight: 300; letter-spacing: 4px; text-transform: uppercase; font-size: clamp(20px, 4vw, 34px); margin: 0.6em 0 0.15em 0; color: #eef3fb; }
+  
+  .subtitle { color: #8fa3b8; font-size: clamp(12px, 1.6vw, 15px); margin-bottom: 1.5em; max-width: 580px; line-height: 1.5; }
+  
+  .actionBtn {
+    display:flex; flex-direction:column; align-items:center; gap:4px; cursor:pointer;
+    background: linear-gradient(180deg, rgba(60,90,70,0.55), rgba(20,30,24,0.75));
+    border: 1px solid rgba(140,210,150,0.35); border-radius: 14px; padding: 20px 40px; transition: transform 0.15s ease, border-color 0.15s ease;
+  }
+  .actionBtn:hover { transform: translateY(-2px); border-color: rgba(170,240,180,0.6); }
+  .actionBtn .playLabel { font-size: 15px; font-weight:700; letter-spacing:1.5px; color:#eaffef; }
+  
+  #retryBtn { margin-top: 25px; }
+
+  #hud {
+    position: fixed; top: 12px; left: 12px; z-index: 20;
+    background: rgba(4,6,10,0.75); color: #d0dcfa; font-size: 12px; padding: 12px 16px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.08); display:none;
+  }
+  #staminaWrap { margin-top:8px; height:6px; background: rgba(255,255,255,0.15); border-radius:3px; width: 140px; }
+  #staminaBar { height:100%; width:100%; background: linear-gradient(90deg,#5599ff,#b2d0ff); transition: width 0.1s linear; }
+
+  #touchControls { position: fixed; inset: 0; z-index: 15; display: none; pointer-events: none; }
+  #joyBase { position: absolute; left: 24px; bottom: 24px; width: 110px; height: 110px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.2); pointer-events: auto; touch-action: none; }
+  #joyStick { position: absolute; left: 35px; top: 35px; width: 40px; height: 40px; border-radius: 50%; background: rgba(220,230,245,0.5); pointer-events: none; }
+  #sprintBtn { position: absolute; right: 25px; bottom: 30px; width: 68px; height: 68px; border-radius: 50%; background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.22); color: #dfe8f5; font-size: 10px; font-weight: bold; display: flex; align-items: center; justify-content: center; pointer-events: auto; touch-action: none; }
+</style>
+</head>
+<body>
+
+<a-scene id="mainScene" game-loop vr-mode-ui="enabled: true" renderer="antialias:true; colorManagement:true;">
+  
+  <a-entity id="rig" position="0 0 0">
+    <a-entity id="camera" camera="fov:80; near:0.05" position="0 1.6 0" look-controls="pointerLockEnabled:true">
+      <a-entity id="fadeOverlay" geometry="primitive:plane; width:2; height:2" position="0 0 -0.5" material="color:#020304; shader:flat; opacity:0; transparent:true" visible="false"></a-entity>
+    </a-entity>
+  </a-entity>
+
+  <a-entity id="worldRoot"></a-entity>
+  
+  <!-- ENTIDAD ATERRADORA (BESTIA) -->
+  <a-entity id="stalker" position="0 -100 0">
+    <a-cylinder color="#030303" radius="0.25" height="2.8" position="0 1.4 0" material="roughness:1"></a-cylinder>
+    <a-cone color="#080303" radius-bottom="0.5" radius-top="0.1" height="2.2" position="0 1.2 0"></a-cone>
+    <a-sphere color="#000000" radius="0.32" position="0 2.8 0"></a-sphere>
+    
+    <a-sphere color="#ff0000" radius="0.045" position="0.11 2.88 0.28" material="emissive: #ff0000; emissiveIntensity: 8"></a-sphere>
+    <a-sphere color="#ff0000" radius="0.045" position="-0.11 2.88 0.28" material="emissive: #ff0000; emissiveIntensity: 8"></a-sphere>
+    <a-sphere color="#ff3300" radius="0.025" position="0.02 2.97 0.29" material="emissive: #ff3300; emissiveIntensity: 6"></a-sphere>
+    
+    <a-box color="#050505" width="0.06" height="1.4" depth="0.06" position="0.45 1.8 0.4" rotation="20 0 -25"></a-box>
+    <a-box color="#050505" width="0.06" height="1.4" depth="0.06" position="-0.45 1.8 0.4" rotation="20 0 25"></a-box>
+    
+    <a-entity light="type: point; color: #ff0000; intensity: 1.5; distance: 6; decay: 2" position="0 2.5 0.2"></a-entity>
+  </a-entity>
+
+  <a-entity id="ambientLight" light="type:ambient; color:#101820; intensity:0.35"></a-entity>
+  <a-entity id="dirLight" light="type:directional; color:#304560; intensity:0.2" position="2 8 2"></a-entity>
+  <a-sky color="#020304"></a-sky>
+</a-scene>
+
+<div id="hud">
+  <b>Controles:</b> WASD / Flechas &middot; <b>Correr:</b> Shift<br>
+  <div id="staminaWrap"><div id="staminaBar"></div></div>
+</div>
+
+<div id="touchControls">
+  <div id="joyBase"><div id="joyStick"></div></div>
+  <div id="sprintBtn">CORRER</div>
+</div>
+
+<div id="menuScreen">
+  <h1>Bosque de Pesadilla</h1>
+  <div class="subtitle">Matas y árboles oscuros bloquean el camino. La criatura te acecha... Corre para escapar.</div>
+  <div class="actionBtn" id="startBtn"><span class="playLabel">▶ EMPEZAR ESCAPE</span></div>
+</div>
+
+<div id="gameOverScreen">
+  <h1>TE HA ATRAPADO</h1>
+  <div class="subtitle">La bestia devoró tu alma en la oscuridad del bosque.</div>
+  <div class="actionBtn" id="retryBtn"><span class="playLabel">REINTENTAR</span></div>
+</div>
+
+<script>
+'use strict';
+
+const SoundFX = {
+  ctx: null,
+  init() {
+    if (!this.ctx) this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+  },
+  playHeartbeat() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    osc.type = 'sine';
+    
+    osc.frequency.setValueAtTime(40, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(15, this.ctx.currentTime + 0.35);
+    
+    gain.gain.setValueAtTime(0.12, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.35);
+    
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.35);
+  },
+  playCatchSound() {
+    if (!this.ctx) return;
+    const osc = this.ctx.createOscillator();
+    const gain = this.ctx.createGain();
+    
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(120, this.ctx.currentTime);
+    osc.frequency.exponentialRampToValueAtTime(30, this.ctx.currentTime + 0.6);
+    
+    gain.gain.setValueAtTime(0.2, this.ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.6);
+    
+    osc.connect(gain);
+    gain.connect(this.ctx.destination);
+    osc.start();
+    osc.stop(this.ctx.currentTime + 0.6);
+  }
+};
+
+const WALK_SPEED = 2.6;
+const RUN_SPEED  = 5.5;
+const STAMINA_MAX = 4.0;          
+const STAMINA_REGEN = 0.85;       
+const PLAYER_RADIUS = 0.4;
+const CATCH_DISTANCE = 1.6; 
+
+const FOREST_CFG = {
+  size: 85, groundColor: '#070b07', fogColor: '#040608', fogDensity: 0.065,
+  trunk: '#120d09', foliage: '#0a1a0d', treeCount: 260
+};
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function generateMapContent(mapCfg, seed) {
+  const THREE = AFRAME.THREE;
+  const rng = mulberry32(seed);
+  const root = new THREE.Group();
+  
+  const groundGeo = new THREE.PlaneGeometry(mapCfg.size + 40, mapCfg.size + 40);
+  const ground = new THREE.Mesh(groundGeo, new THREE.MeshStandardMaterial({ color: mapCfg.groundColor, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2;
+  root.add(ground);
+
+  const trunkGeo = new THREE.CylinderGeometry(0.2, 0.4, 3.8, 5);
+  trunkGeo.translate(0, 1.9, 0);
+  const trunkMesh = new THREE.InstancedMesh(trunkGeo, new THREE.MeshStandardMaterial({ color: mapCfg.trunk, roughness: 1 }), mapCfg.treeCount);
+
+  const foliageGeo = new THREE.ConeGeometry(1.9, 3.8, 5);
+  foliageGeo.translate(0, 4.2, 0);
+  const foliageMesh = new THREE.InstancedMesh(foliageGeo, new THREE.MeshStandardMaterial({ color: mapCfg.foliage, roughness: 0.9, flatShading: true }), mapCfg.treeCount);
+
+  const dummy = new THREE.Object3D();
+  const positions = [];
+  let placed = 0;
+  
+  while (placed < mapCfg.treeCount) {
+    const x = (rng() - 0.5) * mapCfg.size, z = (rng() - 0.5) * mapCfg.size;
+    if (Math.hypot(x, z) < 6.5) continue;
+    
+    dummy.position.set(x, 0, z);
+    const scaleY = 0.8 + rng() * 0.7;
+    dummy.scale.set(1, scaleY, 1);
+    dummy.updateMatrix();
+    
+    trunkMesh.setMatrixAt(placed, dummy.matrix);
+    foliageMesh.setMatrixAt(placed, dummy.matrix);
+    positions.push({ x, z, r: 0.45 });
+    placed++;
+  }
+  
+  trunkMesh.instanceMatrix.needsUpdate = true;
+  foliageMesh.instanceMatrix.needsUpdate = true;
+  root.add(trunkMesh);
+  root.add(foliageMesh);
+
+  return { root, treePositions: positions };
+}
+
+const Input = {
+  keys: {}, sprintTouch: false, touchVector: {x:0, y:0},
+  vector() {
+    let x = Number(this.touchVector.x) || 0, y = Number(this.touchVector.y) || 0;
+    if (this.keys['w'] || this.keys['KeyW'] || this.keys['ArrowUp']) y -= 1;
+    if (this.keys['s'] || this.keys['KeyS'] || this.keys['ArrowDown']) y += 1;
+    if (this.keys['a'] || this.keys['KeyA'] || this.keys['ArrowLeft']) x -= 1;
+    if (this.keys['d'] || this.keys['KeyD'] || this.keys['ArrowRight']) x += 1;
+    const len = Math.hypot(x, y);
+    if (!isFinite(len) || len === 0) return { x: 0, y: 0 };
+    return len > 1 ? { x: x / len, y: y / len } : { x, y };
+  },
+  sprint() { return this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.sprintTouch || this.keys['shift']; }
+};
+
+window.addEventListener('keydown', e => {
+  Input.keys[e.key] = true; Input.keys[e.key.toLowerCase()] = true; Input.keys[e.code] = true;
+});
+window.addEventListener('keyup', e => {
+  Input.keys[e.key] = false; Input.keys[e.key.toLowerCase()] = false; Input.keys[e.code] = false;
+});
+
+const joyBase = document.getElementById('joyBase'), joyStick = document.getElementById('joyStick');
+let joyActive = false, joyCenter = {x:0, y:0};
+
+joyBase.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const rect = joyBase.getBoundingClientRect();
+  joyCenter = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  joyActive = true;
+  updateJoystick(e.targetTouches[0]);
+}, {passive: false});
+
+joyBase.addEventListener('touchmove', e => {
+  e.preventDefault();
+  if (joyActive) updateJoystick(e.targetTouches[0]);
+}, {passive: false});
+
+joyBase.addEventListener('touchend', e => {
+  e.preventDefault();
+  joyActive = false;
+  joyStick.style.transform = `translate(0px, 0px)`;
+  Input.touchVector = {x:0, y:0};
+}, {passive: false});
+
+function updateJoystick(touch) {
+  const dx = touch.clientX - joyCenter.x, dy = touch.clientY - joyCenter.y;
+  const maxR = 35, dist = Math.min(Math.hypot(dx, dy), maxR), angle = Math.atan2(dy, dx);
+  const mx = Math.cos(angle) * dist, my = Math.sin(angle) * dist;
+  joyStick.style.transform = `translate(${mx}px, ${my}px)`;
+  Input.touchVector = { x: mx / maxR, y: my / maxR };
+}
+
+document.getElementById('sprintBtn').addEventListener('touchstart', e => { e.preventDefault(); Input.sprintTouch = true; });
+document.getElementById('sprintBtn').addEventListener('touchend', e => { e.preventDefault(); Input.sprintTouch = false; });
+
+const Game = {
+  state: 'menu', stamina: STAMINA_MAX, playerPos: { x: 0, z: 0 },
+  sceneEl: null, rigEl: null, cameraEl: null, stalkerEl: null, stalkerPos: {x: 22, z: 22}, mapData: null,
+  heartbeatTimer: 0,
+
+  startGame() {
+    SoundFX.init();
+    if (!this.mapData) {
+      this.mapData = generateMapContent(FOREST_CFG, Date.now());
+      document.getElementById('worldRoot').object3D.add(this.mapData.root);
+    }
+    
+    this.sceneEl.setAttribute('fog', { type: 'exponential', color: FOREST_CFG.fogColor, density: FOREST_CFG.fogDensity });
+    this.playerPos = { x: 0, z: 0 };
+    this.stalkerPos = { x: 22, z: 22 };
+    this.rigEl.object3D.position.set(0, 0, 0);
+    this.stalkerEl.object3D.position.set(22, 0, 22);
+
+    this.stamina = STAMINA_MAX;
+    this.state = 'playing';
+
+    document.getElementById('menuScreen').style.display = 'none';
+    document.getElementById('gameOverScreen').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+
+    if (('ontouchstart' in window) || (navigator.maxTouchPoints > 0)) {
+      document.getElementById('touchControls').style.display = 'block';
+    }
+    document.getElementById('fadeOverlay').setAttribute('visible', false);
+  },
+
+  triggerCatch() {
+    if (this.state !== 'playing') return;
+    this.state = 'caught';
+    
+    SoundFX.playCatchSound();
+    const fade = document.getElementById('fadeOverlay');
+    fade.setAttribute('visible', true);
+    fade.setAttribute('material', 'opacity', 1.0);
+
+    setTimeout(() => {
+      document.getElementById('hud').style.display = 'none';
+      document.getElementById('touchControls').style.display = 'none';
+      document.getElementById('gameOverScreen').style.display = 'flex';
+    }, 1000);
+  }
+};
+
+AFRAME.registerComponent('game-loop', {
+  init: function () {
+    Game.sceneEl = this.el; 
+    Game.rigEl = document.getElementById('rig'); 
+    Game.cameraEl = document.getElementById('camera');
+    Game.stalkerEl = document.getElementById('stalker');
+
+    document.getElementById('startBtn').addEventListener('click', () => Game.startGame());
+    document.getElementById('retryBtn').addEventListener('click', () => Game.startGame());
+  },
+  tick: function (time, delta) {
+    const dt = Math.min(delta / 1000, 0.05) || 0.016;
+    if (Game.state === 'playing') {
+      this.updatePlayer(dt);
+      this.updateStalker(dt);
+      
+      const s = Game.stamina / STAMINA_MAX;
+      const bar = document.getElementById('staminaBar');
+      bar.style.width = (s * 100) + '%';
+      bar.style.background = s < 0.25 ? '#ff3333' : '#5599ff';
+    }
+  },
+  updatePlayer: function (dt) {
+    const input = Input.vector();
+    const wantsMove = Math.abs(input.x) > 0.01 || Math.abs(input.y) > 0.01;
+    const sprinting = Input.sprint() && Game.stamina > 0 && wantsMove;
+    
+    if (sprinting) Game.stamina = Math.max(0, Game.stamina - dt * 1.25);
+    else Game.stamina = Math.min(STAMINA_MAX, Game.stamina + dt * STAMINA_REGEN);
+
+    const dir = new AFRAME.THREE.Vector3();
+    Game.cameraEl.object3D.getWorldDirection(dir);
+    
+    const fx = -dir.x, fz = -dir.z;
+    const len = Math.hypot(fx, fz) || 1;
+    const normFx = fx / len, normFz = fz / len;
+    const rx = -normFz, rz = normFx;
+
+    const speed = sprinting ? RUN_SPEED : WALK_SPEED;
+
+    const moveX = (normFx * (-input.y) + rx * input.x) * speed * dt;
+    const moveZ = (normFz * (-input.y) + rz * input.x) * speed * dt;
+
+    let nx = Game.playerPos.x + moveX;
+    let nz = Game.playerPos.z + moveZ;
+
+    if (Game.mapData) {
+      for (const t of Game.mapData.treePositions) {
+        if (Math.hypot(nx - t.x, nz - t.z) < t.r + PLAYER_RADIUS) { 
+          nx = Game.playerPos.x; nz = Game.playerPos.z; break;
+        }
+      }
+    }
+    
+    Game.playerPos.x = nx; Game.playerPos.z = nz;
+    Game.rigEl.object3D.position.set(nx, 0, nz);
+  },
+  updateStalker: function(dt) {
+    const dist = Math.hypot(Game.stalkerPos.x - Game.playerPos.x, Game.stalkerPos.z - Game.playerPos.z);
+    
+    Game.heartbeatTimer += dt;
+    const heartbeatRate = Math.max(0.2, dist / 15);
+    if (Game.heartbeatTimer > heartbeatRate) {
+      SoundFX.playHeartbeat();
+      Game.heartbeatTimer = 0;
+    }
+
+    if (dist > CATCH_DISTANCE) {
+      const speed = 3.3;
+      Game.stalkerPos.x += ((Game.playerPos.x - Game.stalkerPos.x) / dist) * speed * dt;
+      Game.stalkerPos.z += ((Game.playerPos.z - Game.stalkerPos.z) / dist) * speed * dt;
+      
+      const angle = Math.atan2(Game.playerPos.x - Game.stalkerPos.x, Game.playerPos.z - Game.stalkerPos.z);
+      Game.stalkerEl.object3D.rotation.y = angle;
+      Game.stalkerEl.object3D.position.set(Game.stalkerPos.x, 0, Game.stalkerPos.z);
+    } else {
+      Game.triggerCatch();
+    }
+  }
+});
+</script>
+</body>
+</html>
