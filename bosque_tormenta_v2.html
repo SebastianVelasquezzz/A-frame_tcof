@@ -1,0 +1,865 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Bosque en Tormenta — Mapa Principal (v2)</title>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
+
+  #hud {
+    position: fixed; bottom: 10px; left: 10px; z-index: 999;
+    font-family: sans-serif; color: #cbd6e2; font-size: 12px; line-height: 1.5;
+    background: rgba(5,8,12,0.55); padding: 8px 12px; border-radius: 8px;
+    pointer-events: none; max-width: 260px;
+  }
+
+  /* Pantalla de carga tipo "stand de videojuego" — solo cosmética,
+     se oculta sola cuando la escena termina de cargar */
+  #loading {
+    position: fixed; inset: 0; z-index: 1000;
+    background: radial-gradient(circle at center, #10151d 0%, #05070a 100%);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    transition: opacity 0.9s ease, visibility 0.9s ease;
+  }
+  #loading.hidden { opacity: 0; visibility: hidden; pointer-events: none; }
+  #loading h1 {
+    color: #e7ecf5; font-family: sans-serif; letter-spacing: 3px;
+    font-size: 22px; font-weight: 300; margin: 0 0 14px 0; text-transform: uppercase;
+  }
+  #loading .bar {
+    width: 220px; height: 3px; background: rgba(255,255,255,0.12); border-radius: 3px; overflow: hidden;
+  }
+  #loading .bar span {
+    display: block; height: 100%; width: 40%; background: #8fa8ff;
+    animation: loadmove 1.1s ease-in-out infinite;
+  }
+  @keyframes loadmove {
+    0% { transform: translateX(-100%); }
+    100% { transform: translateX(350%); }
+  }
+</style>
+
+<script>
+/* =========================================================================
+   NOTA DE RENDIMIENTO (léeme antes de presentar):
+   Este mapa corre en el navegador del teléfono dentro de las gafas de
+   cartón, así que si en tu equipo se ve lento, baja estos números:
+     - forest-generator: "count" (árboles), "bushCount" (arbustos)
+     - rain-system: "count" (gotas de lluvia)
+   Todo está declarado como atributos en el HTML, al final del archivo,
+   así que no hace falta tocar el JavaScript para ajustarlo.
+   ========================================================================= */
+
+const THREE = AFRAME.THREE;
+
+/* ------------------------------------------------------------------------
+   GENERADORES DE TEXTURAS COMPARTIDAS (se crean UNA sola vez y se
+   reutilizan en cientos de objetos — así todo se ve detallado sin
+   reventar el rendimiento)
+   ------------------------------------------------------------------------ */
+
+function createBarkTexture() {
+  const w = 128, h = 256;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#241a12'; ctx.fillRect(0, 0, w, h);
+
+  for (let i = 0; i < 46; i++) {
+    const x = Math.random() * w;
+    const shade = Math.random() * 30 - 15;
+    ctx.strokeStyle = `rgba(${20 + shade},${14 + shade * 0.7},${8 + shade * 0.5},0.55)`;
+    ctx.lineWidth = 1 + Math.random() * 2.6;
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    for (let y = 0; y <= h; y += 16) {
+      ctx.lineTo(x + Math.sin(y * 0.05 + i) * 4 + (Math.random() * 4 - 2), y);
+    }
+    ctx.stroke();
+  }
+  for (let i = 0; i < 16; i++) {
+    const y = Math.random() * h;
+    ctx.strokeStyle = 'rgba(8,5,3,0.3)';
+    ctx.lineWidth = 1 + Math.random();
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y + (Math.random() * 6 - 3)); ctx.stroke();
+  }
+  const img = ctx.getImageData(0, 0, w, h); const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 16;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  ctx.putImageData(img, 0, 0);
+
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(1, 3);
+  return tex;
+}
+
+function createFoliageTexture() {
+  const w = 256, h = 256;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#0b130b'; ctx.fillRect(0, 0, w, h);
+  for (let i = 0; i < 550; i++) {
+    const x = Math.random() * w, y = Math.random() * h, r = 2 + Math.random() * 6;
+    const g = 10 + Math.random() * 24;
+    ctx.fillStyle = `rgba(${g * 0.3},${g + 5},${g * 0.4},0.55)`;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  for (let i = 0; i < 140; i++) {
+    const x = Math.random() * w, y = Math.random() * h, r = 1 + Math.random() * 2.5;
+    ctx.fillStyle = 'rgba(2,4,2,0.55)';
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  tex.repeat.set(2, 2);
+  return tex;
+}
+
+function createFernTexture() {
+  const w = 128, h = 128;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  for (let i = 0; i < 7; i++) {
+    const baseX = w / 2 + (Math.random() * 20 - 10);
+    const angle = -Math.PI / 2 + (Math.random() * 1.4 - 0.7);
+    const len = 40 + Math.random() * 45;
+    const shade = 15 + Math.random() * 20;
+    ctx.strokeStyle = `rgba(${shade * 0.5},${shade + 25},${shade * 0.6},0.85)`;
+    ctx.lineWidth = 2 + Math.random() * 2;
+    ctx.beginPath();
+    ctx.moveTo(baseX, h);
+    const midX = baseX + Math.cos(angle) * len * 0.6;
+    const midY = h + Math.sin(angle) * len * 0.6;
+    const endX = baseX + Math.cos(angle) * len;
+    const endY = h + Math.sin(angle) * len;
+    ctx.quadraticCurveTo(midX, midY, endX, endY);
+    ctx.stroke();
+    // hojitas laterales
+    for (let s = 0.2; s < 0.9; s += 0.18) {
+      const sx = baseX + Math.cos(angle) * len * s;
+      const sy = h + Math.sin(angle) * len * s;
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(sx + 10 * (Math.random() > 0.5 ? 1 : -1), sy - 6);
+      ctx.stroke();
+    }
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function createRainStreakTexture() {
+  const w = 8, h = 64;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0, 'rgba(255,255,255,0)');
+  grad.addColorStop(0.5, 'rgba(215,228,255,0.95)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(w * 0.3, 0, w * 0.4, h);
+  return new THREE.CanvasTexture(c);
+}
+
+function createVisorStreakTexture() {
+  const w = 256, h = 256;
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, w, h);
+  for (let i = 0; i < 46; i++) {
+    const x = Math.random() * w;
+    const len = 20 + Math.random() * 90;
+    const y = Math.random() * h;
+    const grad = ctx.createLinearGradient(x, y, x, y + len);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.5, 'rgba(255,255,255,0.55)');
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.strokeStyle = grad;
+    ctx.lineWidth = 0.6 + Math.random() * 1.3;
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + (Math.random() * 4 - 2), y + len); ctx.stroke();
+  }
+  return new THREE.CanvasTexture(c);
+}
+
+function createPuddleTexture() {
+  const s = 128;
+  const c = document.createElement('canvas'); c.width = s; c.height = s;
+  const ctx = c.getContext('2d');
+  const grad = ctx.createRadialGradient(s / 2, s / 2, 0, s / 2, s / 2, s / 2);
+  grad.addColorStop(0, 'rgba(150,170,200,0.6)');
+  grad.addColorStop(0.7, 'rgba(95,110,135,0.35)');
+  grad.addColorStop(1, 'rgba(60,70,90,0)');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2); ctx.fill();
+  return new THREE.CanvasTexture(c);
+}
+
+function createMistTexture() {
+  const s = 256;
+  const c = document.createElement('canvas'); c.width = s; c.height = s;
+  const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, s, s);
+  for (let i = 0; i < 80; i++) {
+    const x = Math.random() * s, y = Math.random() * s, r = 20 + Math.random() * 60;
+    const grad = ctx.createRadialGradient(x, y, 0, x, y, r);
+    grad.addColorStop(0, 'rgba(185,195,205,0.16)');
+    grad.addColorStop(1, 'rgba(185,195,205,0)');
+    ctx.fillStyle = grad;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+  return tex;
+}
+
+/* ------------------------------------------------------------------------
+   SUELO PROCESAL — tierra + pasto + piedras + manchas de humedad
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('procedural-ground', {
+  init: function () {
+    const size = 2048;
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+
+    ctx.fillStyle = '#221912';
+    ctx.fillRect(0, 0, size, size);
+
+    // variación de tierra
+    for (let i = 0; i < 700; i++) {
+      const x = Math.random() * size, y = Math.random() * size;
+      const r = 20 + Math.random() * 110;
+      const shade = 12 + Math.random() * 22;
+      ctx.fillStyle = `rgba(${40 + shade},${28 + shade * 0.6},${16 + shade * 0.3},0.3)`;
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // pasto irregular
+    for (let i = 0; i < 1800; i++) {
+      const x = Math.random() * size, y = Math.random() * size;
+      const r = 8 + Math.random() * 40;
+      const g = 26 + Math.random() * 28;
+      ctx.fillStyle = `rgba(${8 + g * 0.3},${22 + g},${7 + g * 0.2},0.45)`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, r, r * (0.4 + Math.random() * 0.6), Math.random() * Math.PI, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // piedras
+    for (let i = 0; i < 520; i++) {
+      const x = Math.random() * size, y = Math.random() * size;
+      const r = 4 + Math.random() * 16;
+      const gshade = 55 + Math.random() * 40;
+      ctx.fillStyle = `rgba(${gshade},${gshade},${gshade + 5},0.6)`;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      const sides = 5 + Math.floor(Math.random() * 3);
+      for (let s = 0; s <= sides; s++) {
+        const ang = (s / sides) * Math.PI * 2;
+        const rr = r * (0.7 + Math.random() * 0.5);
+        ctx.lineTo(x + Math.cos(ang) * rr, y + Math.sin(ang) * rr);
+      }
+      ctx.fill();
+    }
+
+    // manchas húmedas (efecto de lluvia calando la tierra)
+    for (let i = 0; i < 260; i++) {
+      const x = Math.random() * size, y = Math.random() * size;
+      const r = 20 + Math.random() * 90;
+      ctx.fillStyle = 'rgba(10,14,18,0.18)';
+      ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    }
+
+    // ruido fino
+    const imgData = ctx.getImageData(0, 0, size, size);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      const n = (Math.random() - 0.5) * 16;
+      d[i] += n; d[i + 1] += n; d[i + 2] += n;
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(55, 55);
+    texture.anisotropy = 8;
+
+    const applyTexture = () => {
+      const mesh = this.el.getObject3D('mesh');
+      if (mesh) {
+        mesh.material = new THREE.MeshStandardMaterial({
+          map: texture, roughness: 0.88, metalness: 0.05
+        });
+      } else {
+        setTimeout(applyTexture, 50);
+      }
+    };
+    applyTexture();
+  }
+});
+
+/* ------------------------------------------------------------------------
+   GENERADOR DE BOSQUE — árboles vivos, árboles muertos, troncos caídos,
+   rocas grandes, arbustos/helechos, charcos, niebla baja y luciérnagas
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('forest-generator', {
+  schema: {
+    count:       { type: 'number', default: 230 },
+    radius:      { type: 'number', default: 65 },
+    minDistance: { type: 'number', default: 6 },
+    bushCount:   { type: 'number', default: 110 },
+    logCount:    { type: 'number', default: 18 },
+    boulderCount:{ type: 'number', default: 14 },
+    puddleCount: { type: 'number', default: 34 }
+  },
+  init: function () {
+    const data = this.data;
+    const group = new THREE.Group();
+    const colliders = [];
+
+    const barkTex = createBarkTexture();
+    const foliageTex = createFoliageTexture();
+    const fernTex = createFernTexture();
+    const puddleTex = createPuddleTexture();
+    const mistTex = createMistTexture();
+
+    const randomPointInForest = (minD) => {
+      let x, z, d;
+      do {
+        x = (Math.random() * 2 - 1) * data.radius;
+        z = (Math.random() * 2 - 1) * data.radius;
+        d = Math.sqrt(x * x + z * z);
+      } while (d < minD || d > data.radius);
+      return { x, z };
+    };
+
+    // ---- ÁRBOLES ----
+    for (let i = 0; i < data.count; i++) {
+      const p = randomPointInForest(data.minDistance);
+      const isDead = Math.random() < 0.15;
+
+      const trunkHeight = 3 + Math.random() * 4.5;
+      const trunkRadius = 0.15 + Math.random() * 0.18;
+      const trunkGeo = new THREE.CylinderGeometry(trunkRadius * 0.7, trunkRadius, trunkHeight, 6);
+      const tShade = 0.55 + Math.random() * 0.3;
+      const trunkMat = new THREE.MeshStandardMaterial({
+        map: barkTex, color: new THREE.Color(tShade, tShade * 0.85, tShade * 0.7), roughness: 0.95
+      });
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.set(p.x, trunkHeight / 2, p.z);
+      trunk.rotation.y = Math.random() * Math.PI;
+      group.add(trunk);
+
+      if (isDead) {
+        // ramas secas y torcidas — silueta tétrica
+        const branches = 2 + Math.floor(Math.random() * 3);
+        for (let b = 0; b < branches; b++) {
+          const bh = trunkHeight * (0.5 + Math.random() * 0.4);
+          const branchGeo = new THREE.CylinderGeometry(0.02, trunkRadius * 0.5, trunkHeight * 0.5, 4);
+          const branch = new THREE.Mesh(branchGeo, trunkMat);
+          branch.position.set(p.x, bh, p.z);
+          branch.rotation.z = (Math.random() * 0.9 - 0.45) + 0.5;
+          branch.rotation.y = Math.random() * Math.PI * 2;
+          group.add(branch);
+        }
+      } else {
+        const layers = 2 + Math.floor(Math.random() * 2);
+        let currentY = trunkHeight * 0.55;
+        const gShade = 0.5 + Math.random() * 0.3;
+        const foliageMat = new THREE.MeshStandardMaterial({
+          map: foliageTex, color: new THREE.Color(gShade * 0.4, gShade, gShade * 0.45), roughness: 1
+        });
+        for (let f = 0; f < layers; f++) {
+          const coneH = trunkHeight * 0.65 * (1 - f * 0.15);
+          const coneR = (1.3 - f * 0.28) * (0.6 + Math.random() * 0.5);
+          const coneGeo = new THREE.ConeGeometry(coneR, coneH, 7);
+          const cone = new THREE.Mesh(coneGeo, foliageMat);
+          cone.position.set(p.x, currentY + coneH * 0.45, p.z);
+          group.add(cone);
+          currentY += coneH * 0.55;
+        }
+      }
+
+      colliders.push({ x: p.x, z: p.z, radius: trunkRadius + 0.28 });
+    }
+
+    // ---- TRONCOS CAÍDOS (con colisión a lo largo del tronco) ----
+    for (let i = 0; i < data.logCount; i++) {
+      const p = randomPointInForest(data.minDistance);
+      const len = 3 + Math.random() * 4;
+      const rad = 0.22 + Math.random() * 0.18;
+      const angle = Math.random() * Math.PI * 2;
+      const logGeo = new THREE.CylinderGeometry(rad, rad * 0.85, len, 6);
+      const shade = 0.5 + Math.random() * 0.25;
+      const logMat = new THREE.MeshStandardMaterial({
+        map: barkTex, color: new THREE.Color(shade, shade * 0.85, shade * 0.7), roughness: 0.95
+      });
+      const log = new THREE.Mesh(logGeo, logMat);
+      log.rotation.z = Math.PI / 2;
+      log.rotation.y = angle;
+      log.position.set(p.x, rad, p.z);
+      group.add(log);
+
+      const dx = Math.cos(angle), dz = Math.sin(angle);
+      for (let s = -1; s <= 1; s += 0.66) {
+        colliders.push({ x: p.x + dx * len * 0.5 * s, z: p.z + dz * len * 0.5 * s, radius: rad + 0.15 });
+      }
+    }
+
+    // ---- ROCAS GRANDES (con colisión) ----
+    for (let i = 0; i < data.boulderCount; i++) {
+      const p = randomPointInForest(data.minDistance);
+      const s = 0.6 + Math.random() * 0.8;
+      const rockGeo = new THREE.DodecahedronGeometry(s, 0);
+      const shade = 50 + Math.random() * 35;
+      const rockMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(`rgb(${shade},${shade},${shade + 4})`), roughness: 0.9
+      });
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      rock.position.set(p.x, s * 0.45, p.z);
+      rock.rotation.set(Math.random(), Math.random(), Math.random());
+      group.add(rock);
+      colliders.push({ x: p.x, z: p.z, radius: s * 0.75 });
+    }
+
+    // ---- ROCAS PEQUEÑAS DECORATIVAS (sin colisión) ----
+    for (let i = 0; i < 90; i++) {
+      const p = randomPointInForest(0);
+      const s = 0.12 + Math.random() * 0.3;
+      const rockGeo = new THREE.DodecahedronGeometry(s, 0);
+      const shade = 55 + Math.random() * 30;
+      const rockMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color(`rgb(${shade},${shade},${shade + 4})`), roughness: 0.9
+      });
+      const rock = new THREE.Mesh(rockGeo, rockMat);
+      rock.position.set(p.x, s * 0.4, p.z);
+      rock.rotation.set(Math.random(), Math.random(), Math.random());
+      group.add(rock);
+    }
+
+    // ---- ARBUSTOS / HELECHOS (billboards en cruz, sin colisión) ----
+    const fernMat = new THREE.MeshBasicMaterial({
+      map: fernTex, transparent: true, alphaTest: 0.3, side: THREE.DoubleSide
+    });
+    for (let i = 0; i < data.bushCount; i++) {
+      const p = randomPointInForest(2);
+      const s = 0.7 + Math.random() * 0.9;
+      const geo = new THREE.PlaneGeometry(s, s);
+      const plane1 = new THREE.Mesh(geo, fernMat);
+      const plane2 = new THREE.Mesh(geo, fernMat);
+      plane2.rotation.y = Math.PI / 2;
+      const rot = Math.random() * Math.PI;
+      plane1.rotation.y += rot; plane2.rotation.y += rot;
+      plane1.position.set(p.x, s / 2, p.z);
+      plane2.position.set(p.x, s / 2, p.z);
+      group.add(plane1); group.add(plane2);
+    }
+
+    // ---- CHARCOS (superficie húmeda y brillante) ----
+    for (let i = 0; i < data.puddleCount; i++) {
+      const p = randomPointInForest(1);
+      const s = 0.6 + Math.random() * 1.8;
+      const geo = new THREE.PlaneGeometry(s, s);
+      const mat = new THREE.MeshStandardMaterial({
+        map: puddleTex, transparent: true, roughness: 0.12, metalness: 0.4, depthWrite: false
+      });
+      const puddle = new THREE.Mesh(geo, mat);
+      puddle.rotation.x = -Math.PI / 2;
+      puddle.position.set(p.x, 0.02, p.z);
+      group.add(puddle);
+    }
+
+    this.el.setObject3D('forestMesh', group);
+
+    // ---- NIEBLA BAJA (plano semitransparente que se desplaza) ----
+    const mistGeo = new THREE.PlaneGeometry(data.radius * 2.4, data.radius * 2.4);
+    const mistMat = new THREE.MeshBasicMaterial({
+      map: mistTex, transparent: true, opacity: 0.4, depthWrite: false, side: THREE.DoubleSide
+    });
+    this.mist = new THREE.Mesh(mistGeo, mistMat);
+    this.mist.rotation.x = -Math.PI / 2;
+    this.mist.position.y = 0.6;
+    this.el.setObject3D('mist', this.mist);
+    this.mistTex = mistTex;
+
+    // ---- LUCIÉRNAGAS (sutiles, pocas) ----
+    const fireflyCount = 40;
+    const positions = new Float32Array(fireflyCount * 3);
+    this.baseY = new Float32Array(fireflyCount);
+    for (let i = 0; i < fireflyCount; i++) {
+      const p = randomPointInForest(0);
+      const y = 0.4 + Math.random() * 2.2;
+      positions[i * 3] = p.x;
+      positions[i * 3 + 1] = y;
+      positions[i * 3 + 2] = p.z;
+      this.baseY[i] = y;
+    }
+    const fireflyGeo = new THREE.BufferGeometry();
+    fireflyGeo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const fireflyMat = new THREE.PointsMaterial({
+      color: 0x8fdcff, size: 0.1, transparent: true, opacity: 0.75, sizeAttenuation: true
+    });
+    this.fireflies = new THREE.Points(fireflyGeo, fireflyMat);
+    this.el.setObject3D('fireflies', this.fireflies);
+    this.fireflyCount = fireflyCount;
+
+    window.__forestColliders = colliders;
+    window.__forestBoundary = data.radius + 3;
+  },
+  tick: function (time) {
+    if (this.fireflies) {
+      const posAttr = this.fireflies.geometry.attributes.position;
+      for (let i = 0; i < this.fireflyCount; i++) {
+        posAttr.array[i * 3 + 1] = this.baseY[i] + Math.sin(time * 0.001 + i) * 0.3;
+      }
+      posAttr.needsUpdate = true;
+    }
+    if (this.mistTex) {
+      this.mistTex.offset.x = Math.sin(time * 0.00005) * 0.3;
+      this.mistTex.offset.y = Math.cos(time * 0.00004) * 0.3;
+    }
+  }
+});
+
+/* ------------------------------------------------------------------------
+   LLUVIA — miles de gotas cayendo, siempre centradas alrededor del jugador
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('rain-system', {
+  schema: {
+    count:  { type: 'number', default: 1400 },
+    area:   { type: 'number', default: 30 },
+    height: { type: 'number', default: 16 },
+    speed:  { type: 'number', default: 13 }
+  },
+  init: function () {
+    const data = this.data;
+    const positions = new Float32Array(data.count * 3);
+    this.velocities = new Float32Array(data.count);
+    for (let i = 0; i < data.count; i++) {
+      positions[i * 3] = (Math.random() * 2 - 1) * data.area;
+      positions[i * 3 + 1] = Math.random() * data.height;
+      positions[i * 3 + 2] = (Math.random() * 2 - 1) * data.area;
+      this.velocities[i] = data.speed * (0.7 + Math.random() * 0.6);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const texture = createRainStreakTexture();
+    const material = new THREE.PointsMaterial({
+      map: texture, size: 0.35, transparent: true, opacity: 0.55,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true
+    });
+    this.points = new THREE.Points(geometry, material);
+    this.el.setObject3D('rain', this.points);
+    this._camPos = new THREE.Vector3();
+  },
+  tick: function (time, deltaMs) {
+    const dt = Math.min((deltaMs || 16) / 1000, 0.05);
+    const camera = this.el.sceneEl.camera;
+    if (camera) {
+      camera.getWorldPosition(this._camPos);
+      this.el.object3D.position.x = this._camPos.x;
+      this.el.object3D.position.z = this._camPos.z;
+    }
+    const posAttr = this.points.geometry.attributes.position;
+    const arr = posAttr.array;
+    for (let i = 0; i < this.data.count; i++) {
+      arr[i * 3 + 1] -= this.velocities[i] * dt;
+      if (arr[i * 3 + 1] < -1) {
+        arr[i * 3 + 1] = this.data.height;
+        arr[i * 3] = (Math.random() * 2 - 1) * this.data.area;
+        arr[i * 3 + 2] = (Math.random() * 2 - 1) * this.data.area;
+      }
+    }
+    posAttr.needsUpdate = true;
+  }
+});
+
+/* ------------------------------------------------------------------------
+   LLUVIA EN EL VISOR — gotas sutiles pegadas a la cámara, como si
+   escurrieran por el cristal de las gafas (se ve en ambos ojos en VR)
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('visor-rain', {
+  init: function () {
+    const tex = createVisorStreakTexture();
+    tex.wrapS = THREE.RepeatWrapping; tex.wrapT = THREE.RepeatWrapping;
+    tex.repeat.set(2, 2);
+    const mat = new THREE.MeshBasicMaterial({
+      map: tex, transparent: true, opacity: 0.14, depthTest: false, depthWrite: false
+    });
+    const geo = new THREE.PlaneGeometry(1.3, 1.0);
+    this.mesh = new THREE.Mesh(geo, mat);
+    this.mesh.position.set(0, 0, -0.35);
+    this.mesh.renderOrder = 999;
+    this.el.setObject3D('visorRain', this.mesh);
+    this.tex = tex;
+  },
+  tick: function (time, deltaMs) {
+    this.tex.offset.y -= ((deltaMs || 16) / 1000) * 0.35;
+  }
+});
+
+/* ------------------------------------------------------------------------
+   RELÁMPAGOS — sube la intensidad de las luces por una fracción de
+   segundo en intervalos aleatorios, con un patrón de doble parpadeo
+   como un rayo real
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('lightning-system', {
+  init: function () {
+    this.flashLight = new THREE.PointLight(0xbfd4ff, 0, 220, 1.4);
+    this.flashLight.position.set(-10, 45, -25);
+    this.el.object3D.add(this.flashLight);
+
+    this.dirLight = null;
+    this.baseDirIntensity = 0.15;
+    const dirEl = document.querySelector('#stormDirLight');
+    if (dirEl) {
+      dirEl.addEventListener('loaded', () => {
+        this.dirLight = dirEl.getObject3D('light');
+        if (this.dirLight) this.baseDirIntensity = this.dirLight.intensity;
+      });
+    }
+
+    this.timeToNext = this.randomInterval();
+    this.isFlashing = false;
+    this.flashTimeline = 0;
+  },
+  randomInterval: function () { return 6 + Math.random() * 15; },
+  tick: function (time, deltaMs) {
+    const dt = (deltaMs || 16) / 1000;
+    if (!this.isFlashing) {
+      this.timeToNext -= dt;
+      if (this.timeToNext <= 0) { this.isFlashing = true; this.flashTimeline = 0; }
+      return;
+    }
+
+    this.flashTimeline += dt;
+    const t = this.flashTimeline;
+    let intensity = 0;
+    if (t < 0.08) intensity = (t / 0.08) * 4.5;
+    else if (t < 0.18) intensity = 4.5 * (1 - (t - 0.08) / 0.10);
+    else if (t < 0.24) intensity = 0;
+    else if (t < 0.28) intensity = 2.2 * ((t - 0.24) / 0.04);
+    else if (t < 0.4) intensity = 2.2 * (1 - (t - 0.28) / 0.12);
+    else intensity = 0;
+
+    this.flashLight.intensity = intensity;
+    if (this.dirLight) this.dirLight.intensity = this.baseDirIntensity + intensity * 0.5;
+
+    // ilumina también la niebla para que el flash bañe todo el bosque
+    const sceneObj = this.el.sceneEl.object3D;
+    if (sceneObj.fog) {
+      const mix = Math.min(intensity / 4.5, 1);
+      sceneObj.fog.color.setRGB(
+        0.04 + mix * 0.55, 0.05 + mix * 0.58, 0.07 + mix * 0.62
+      );
+    }
+
+    if (t > 0.45) {
+      this.isFlashing = false;
+      this.timeToNext = this.randomInterval();
+      // <-- AQUÍ: dispara tu sonido de trueno (ej: thunderSound.play())
+      // Sugerencia: el trueno real llega después del rayo — usa un
+      // setTimeout de 300 a 1500 ms antes de reproducirlo para que
+      // se sienta más real.
+    }
+  }
+});
+
+/* ------------------------------------------------------------------------
+   COLISIÓN DEL JUGADOR contra árboles, troncos y rocas + borde del mapa
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('forest-collider', {
+  schema: { radius: { type: 'number', default: 0.32 } },
+  tick: function () {
+    const colliders = window.__forestColliders;
+    if (!colliders) return;
+    const pos = this.el.object3D.position;
+
+    for (let i = 0; i < colliders.length; i++) {
+      const c = colliders[i];
+      const dx = pos.x - c.x;
+      const dz = pos.z - c.z;
+      const distSq = dx * dx + dz * dz;
+      const minDist = c.radius + this.data.radius;
+      if (distSq < minDist * minDist && distSq > 0.0000001) {
+        const dist = Math.sqrt(distSq);
+        const overlap = minDist - dist;
+        pos.x += (dx / dist) * overlap;
+        pos.z += (dz / dist) * overlap;
+      }
+    }
+
+    const boundary = window.__forestBoundary || 68;
+    const distCenter = Math.sqrt(pos.x * pos.x + pos.z * pos.z);
+    if (distCenter > boundary) {
+      const scale = boundary / distCenter;
+      pos.x *= scale;
+      pos.z *= scale;
+    }
+  }
+});
+
+/* ------------------------------------------------------------------------
+   MOVIMIENTO PARA GAFAS DE CARTÓN DE UN SOLO BOTÓN (tipo Cardboard)
+   Mantén presionado el botón/pantalla/click y caminas hacia donde miras.
+   Funciona con: click de mouse, toque en pantalla, tecla Espacio/Enter
+   (muchos controles bluetooth de un botón envían Espacio o Enter).
+   ------------------------------------------------------------------------ */
+AFRAME.registerComponent('cardboard-move', {
+  schema: { speed: { type: 'number', default: 2.4 } },
+  init: function () {
+    this.walking = false;
+    this.dir = new THREE.Vector3();
+
+    this.onDown = (e) => {
+      if (e.target && e.target.closest && e.target.closest('.a-enter-vr')) return;
+      this.walking = true;
+    };
+    this.onUp = () => { this.walking = false; };
+    this.onKeyDown = (e) => {
+      if (e.code === 'Space' || e.code === 'Enter') { e.preventDefault(); this.walking = true; }
+    };
+    this.onKeyUp = (e) => {
+      if (e.code === 'Space' || e.code === 'Enter') { this.walking = false; }
+    };
+
+    window.addEventListener('touchstart', this.onDown);
+    window.addEventListener('touchend', this.onUp);
+    window.addEventListener('mousedown', this.onDown);
+    window.addEventListener('mouseup', this.onUp);
+    window.addEventListener('keydown', this.onKeyDown);
+    window.addEventListener('keyup', this.onKeyUp);
+  },
+  tick: function (time, deltaMs) {
+    if (!this.walking) return;
+    const dt = Math.min((deltaMs || 16) / 1000, 0.05);
+    const camObj = this.el.sceneEl.camera;
+    if (!camObj) return;
+    camObj.getWorldDirection(this.dir);
+    this.dir.y = 0;
+    if (this.dir.lengthSq() < 0.0001) return;
+    this.dir.normalize();
+    this.el.object3D.position.addScaledVector(this.dir, this.data.speed * dt);
+  },
+  remove: function () {
+    window.removeEventListener('touchstart', this.onDown);
+    window.removeEventListener('touchend', this.onUp);
+    window.removeEventListener('mousedown', this.onDown);
+    window.removeEventListener('mouseup', this.onUp);
+    window.removeEventListener('keydown', this.onKeyDown);
+    window.removeEventListener('keyup', this.onKeyUp);
+  }
+});
+</script>
+</head>
+<body>
+
+<div id="loading">
+  <h1>Cargando bosque…</h1>
+  <div class="bar"><span></span></div>
+</div>
+
+<div id="hud">
+  Mira hacia donde quieres ir y mantén pulsado (botón / pantalla / Espacio)
+  para caminar.<br>
+  En computador también funciona WASD + mouse.
+</div>
+
+<a-scene
+  renderer="antialias: true"
+  vr-mode-ui="enabled: true"
+  fog="type: linear; color: #05070b; near: 1.5; far: 36">
+
+  <a-assets></a-assets>
+
+  <!-- =====================================================================
+       SONIDOS — AQUÍ AÑADES TUS AUDIOS (lluvia, truenos, ambiente)
+       Ejemplo:
+
+       <a-assets>
+         <audio id="rainSound" src="lluvia.mp3" preload="auto"></audio>
+         <audio id="thunderSound" src="trueno.mp3" preload="auto"></audio>
+       </a-assets>
+       ...
+       <a-entity sound="src: #rainSound; autoplay: true; loop: true; volume: 0.6"></a-entity>
+
+       Para el trueno: busca en este archivo el comentario
+       "AQUÍ: dispara tu sonido de trueno" (está dentro del componente
+       lightning-system, arriba en el <script>) y ahí llamas tu audio
+       cada vez que ocurre un relámpago.
+  ===================================================================== -->
+
+    
+       <a-assets>
+         <img id="skyImg" src="sky2.png" crossorigin="anonymous">
+       </a-assets>
+       ...
+       <a-sky src="#skyImg" rotation="0 -90 0"></a-sky>
+
+       Mientras tanto se usa un color plano oscuro como placeholder.
+ 
+  <a-sky color="#04050a"></a-sky>
+
+  <!-- Iluminación tenue tipo tormenta nocturna -->
+  <a-entity light="type: ambient; color: #1c2636; intensity: 0.32"></a-entity>
+  <a-entity light="type: hemisphere; color: #26364a; groundColor: #08070a; intensity: 0.38"></a-entity>
+  <a-entity id="stormDirLight" light="type: directional; color: #4a5a8a; intensity: 0.15" position="20 30 -10"></a-entity>
+
+  <!-- Relámpagos (afecta las luces de arriba automáticamente) -->
+  <a-entity lightning-system></a-entity>
+
+  <!-- Suelo con textura procedural en alta resolución -->
+  <a-entity
+    geometry="primitive: plane; width: 400; height: 400"
+    rotation="-90 0 0"
+    procedural-ground>
+  </a-entity>
+
+  <!-- Bosque: árboles vivos/muertos, troncos, rocas, arbustos, charcos, niebla -->
+  <a-entity forest-generator="
+    count: 230; radius: 65; minDistance: 6;
+    bushCount: 110; logCount: 18; boulderCount: 14; puddleCount: 34">
+  </a-entity>
+
+  <!-- Lluvia (sigue al jugador automáticamente) -->
+  <a-entity rain-system="count: 1400; area: 30; height: 16; speed: 13"></a-entity>
+
+  <!-- Cámara / Jugador -->
+  <a-camera
+    id="player"
+    position="0 1.6 0"
+    cardboard-move="speed: 2.4"
+    wasd-controls="acceleration: 35"
+    look-controls
+    forest-collider="radius: 0.32">
+
+    <!-- Linterna/farol tenue del jugador -->
+    <a-entity light="type: point; intensity: 0.55; distance: 11; decay: 2; color: #ffcf9e" position="0 0 0"></a-entity>
+
+    <!-- Lluvia sutil sobre el visor -->
+    <a-entity visor-rain></a-entity>
+
+    <!-- Mira central (referencia visual para gafas de cartón) -->
+    <a-entity
+      geometry="primitive: ring; radiusInner: 0.004; radiusOuter: 0.007"
+      material="color: #ffffff; shader: flat; opacity: 0.55; transparent: true"
+      position="0 0 -0.5">
+    </a-entity>
+  </a-camera>
+
+</a-scene>
+
+<script>
+  document.querySelector('a-scene').addEventListener('loaded', function () {
+    setTimeout(function () {
+      document.getElementById('loading').classList.add('hidden');
+    }, 400);
+  });
+</script>
+</body>
+</html>
