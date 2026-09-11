@@ -1,0 +1,1033 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<title>Bosque en Tormenta — VR</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/aframe/1.5.0/aframe.min.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; font-family:'Segoe UI', Tahoma, sans-serif; }
+  a-scene { width:100%; height:100%; }
+
+  /* =====================================================================
+     NOTA PARA TI:
+     Este es un juego de VR REAL, hecho con A-Frame (WebXR). No es un
+     canvas 2D con truco de "parece pixel-art": aquí todo es geometría
+     3D de verdad (troncos, follaje, rocas, el acechador...). Como no
+     existen "píxeles" en 3D, el look retro/indie se logra con
+     sombreado plano (flatShading) y geometría de pocos polígonos —
+     el equivalente 3D de un sprite pixelado.
+
+     Funciona en:
+       - Escritorio: WASD + mouse para mirar.
+       - Móvil (sin gafas): joystick táctil en pantalla.
+       - Gafas/visor VR: botón "gafas" de A-Frame (abajo a la derecha)
+         o el botón grande del menú. Sin mandos: mantén tocada la
+         pantalla para caminar hacia donde miras. Con mandos
+         (Quest, etc.): usa el stick analógico.
+
+     Busca con Ctrl+F:
+       1. CONFIGURACIÓN Y DATOS DE MAPAS
+       2. UTILIDADES (ruido/aleatorio con semilla)
+       3. GENERACIÓN DE BOSQUE (árboles/rocas instanciados en 3D)
+       4. ENTIDAD ACECHADORA (IA de persecución)
+       5. SISTEMAS DE TORMENTA (lluvia, rayos, trueno con WebAudio)
+       6. ENTRADA (teclado, joystick táctil, mando VR, tocar-para-andar)
+       7. COMPONENTE PRINCIPAL DEL JUEGO (game-loop)
+       8. INTERFAZ (menú de mapas, HUD, pantalla "atrapado")
+     ===================================================================== */
+
+  #menuScreen {
+    position: fixed; inset: 0; z-index: 50;
+    background: radial-gradient(circle at 50% 15%, #131c26 0%, #05070a 70%);
+    color: #d9e2ec; display: flex; flex-direction: column; align-items: center;
+    padding: 3.5vh 4vw; overflow-y: auto;
+  }
+  #menuScreen h1 {
+    font-weight: 300; letter-spacing: 4px; text-transform: uppercase;
+    font-size: clamp(20px, 4vw, 34px); margin: 0.6em 0 0.15em 0; text-align: center; color: #eef3fb;
+  }
+  #menuScreen .subtitle {
+    color: #7f93ad; font-size: clamp(11px, 1.6vw, 14px); margin-bottom: 1.4em; text-align: center;
+    max-width: 600px; line-height: 1.55;
+  }
+  #vrHint {
+    display:flex; align-items:center; gap:10px; background: rgba(120,80,20,0.18);
+    border: 1px solid rgba(230,180,90,0.35); color:#e8cf9c; font-size:12px; padding:9px 16px;
+    border-radius: 10px; margin-bottom: 1.6em; max-width:620px; line-height:1.5; text-align:left;
+  }
+  #vrHint .ico { font-size:20px; flex:0 0 auto; }
+  #mapGrid { display:grid; grid-template-columns: repeat(auto-fit, minmax(210px,1fr)); gap:14px; width:100%; max-width:920px; }
+  .mapCard {
+    background: rgba(20,26,36,0.75); border: 1px solid rgba(140,165,210,0.18);
+    border-radius: 10px; padding: 14px 16px; cursor: pointer; text-align: left;
+    transition: transform 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+  }
+  .mapCard:hover, .mapCard:active { transform: translateY(-2px); border-color: rgba(160,190,255,0.55); background: rgba(30,38,52,0.9); }
+  .mapCard h3 { margin: 0 0 6px 0; font-size: 15px; color: #f0f4fa; font-weight: 600; }
+  .mapCard p { margin: 0; font-size: 12px; color: #91a3ba; line-height: 1.4; }
+  .mapCard .swatch { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  #menuFoot { margin-top: 2em; font-size: 11px; color: #56637a; text-align: center; max-width: 620px; line-height: 1.6; }
+
+  #hud {
+    position: fixed; top: 10px; left: 10px; z-index: 20;
+    background: rgba(5,8,12,0.55); color: #cbd6e2; font-size: 11px; line-height: 1.55;
+    padding: 8px 12px; border-radius: 8px; max-width: 240px; pointer-events: none; display:none;
+  }
+  #hud b { color: #f0f4fa; }
+  #staminaWrap { margin-top:6px; height:5px; background: rgba(255,255,255,0.12); border-radius:3px; overflow:hidden; }
+  #staminaBar { height:100%; width:100%; background: linear-gradient(90deg,#7fb2ff,#c8d9ff); transition: width 0.08s linear, background 0.2s; }
+  #mapNameTag {
+    position: fixed; top: 10px; right: 10px; z-index: 20;
+    background: rgba(5,8,12,0.55); color: #aebccd; font-size: 11px; padding: 6px 10px; border-radius: 8px;
+    display: none; pointer-events: none;
+  }
+  #vrEnterBtn {
+    position: fixed; top: 10px; right: 10px; z-index: 25; display:none;
+    background: rgba(30,50,70,0.75); color:#dfe8f5; border:1px solid rgba(160,200,255,0.4);
+    border-radius: 8px; padding: 8px 14px; font-size:12px; pointer-events:auto; cursor:pointer;
+  }
+  #backToMenuHint {
+    position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 20;
+    background: rgba(5,8,12,0.5); color: #90a0b5; font-size: 10px; padding: 4px 10px; border-radius: 6px;
+    display: none; pointer-events: none;
+  }
+
+  #touchControls { position: fixed; inset: 0; z-index: 15; display: none; pointer-events: none; }
+  #joyBase {
+    position: absolute; left: 26px; bottom: 26px; width: 108px; height: 108px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.22); pointer-events: auto; touch-action: none;
+  }
+  #joyStick { position: absolute; left: 34px; top: 34px; width: 40px; height: 40px; border-radius: 50%; background: rgba(220,230,245,0.55); pointer-events: none; }
+  #sprintBtn {
+    position: absolute; right: 30px; bottom: 34px; width: 76px; height: 76px; border-radius: 50%;
+    background: rgba(255,255,255,0.08); border: 2px solid rgba(255,255,255,0.22); color: #dfe8f5;
+    font-size: 10px; display: flex; align-items: center; justify-content: center; text-align: center;
+    pointer-events: auto; touch-action: none;
+  }
+  #sprintBtn.active { background: rgba(160,200,255,0.35); }
+  #vrWalkHint {
+    position: fixed; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 16;
+    background: rgba(5,8,12,0.5); color:#9db0c6; font-size: 11px; padding: 6px 12px; border-radius: 8px;
+    display:none; pointer-events:none; text-align:center;
+  }
+
+  #loadingTip { position: fixed; bottom: 8px; right: 10px; z-index: 5; color: #333c48; font-size: 10px; }
+</style>
+</head>
+<body>
+
+<a-scene id="mainScene" game-loop vr-mode-ui="enabled: true" renderer="antialias:true; colorManagement:true">
+
+  <a-assets></a-assets>
+
+  <a-entity id="rig" position="0 0 0">
+    <a-entity id="camera" camera="fov:82; near:0.05" position="0 1.6 0" look-controls="pointerLockEnabled:true">
+      <a-entity id="fadeOverlay" geometry="primitive:plane; width:1.4; height:1.4" position="0 0 -0.45"
+                 material="color:#000000; shader:flat; opacity:0; transparent:true; side:double" visible="false"></a-entity>
+      <a-entity id="vignette" geometry="primitive:plane; width:2.2; height:2.2" position="0 0 -0.9"
+                 material="color:#5a0808; shader:flat; opacity:0; transparent:true; side:double" visible="false"></a-entity>
+      <a-text id="caughtText" value="Te alcanzo..." align="center" color="#c95a5a" width="2.6"
+              position="0 0.12 -0.55" opacity="0" visible="false"></a-text>
+      <a-text id="caughtSubText" value="reiniciando..." align="center" color="#8a7070" width="1.6"
+              position="0 -0.08 -0.55" opacity="0" visible="false"></a-text>
+    </a-entity>
+  </a-entity>
+
+  <a-entity id="handL" hand-tracking-controls="hand:left" oculus-touch-controls="hand:left" vive-controls="hand:left"
+            windows-motion-controls="hand:left" generic-tracked-controller-controls="hand:left"></a-entity>
+  <a-entity id="handR" hand-tracking-controls="hand:right" oculus-touch-controls="hand:right" vive-controls="hand:right"
+            windows-motion-controls="hand:right" generic-tracked-controller-controls="hand:right"></a-entity>
+
+  <a-entity id="worldRoot"></a-entity>
+  <a-entity id="stalkerRoot"></a-entity>
+
+  <a-entity id="ambientLight" light="type:ambient; color:#8fa5c0; intensity:0.55"></a-entity>
+  <a-entity id="dirLight" light="type:directional; color:#cfe0ff; intensity:0.5" position="3 6 2"></a-entity>
+
+  <a-sky id="sky" color="#1a2230"></a-sky>
+</a-scene>
+
+<div id="hud">
+  <b>Mover:</b> WASD / flechas &middot; <b>Correr:</b> Shift (mantén)<br>
+  <b>Móvil:</b> joystick + botón correr &middot; <b>VR:</b> mantén tocada la pantalla, o stick del mando<br>
+  <b>Esc:</b> volver al menú
+  <div id="staminaWrap"><div id="staminaBar"></div></div>
+</div>
+<div id="mapNameTag"></div>
+<button id="vrEnterBtn">🥽 Entrar en VR</button>
+<div id="backToMenuHint">Pulsa ESC para volver al menú de mapas</div>
+<div id="vrWalkHint">Mantén tocada la pantalla para caminar hacia donde miras</div>
+
+<div id="touchControls">
+  <div id="joyBase"><div id="joyStick"></div></div>
+  <div id="sprintBtn">CORRER</div>
+</div>
+
+<div id="menuScreen">
+  <h1>Bosque en Tormenta</h1>
+  <div class="subtitle">
+    Elige un lugar para explorar en VR. Algo camina entre los árboles: no hace ruido
+    hasta que ya está cerca. Si te toca, todo se pone negro y despiertas otra vez
+    donde empezaste.
+  </div>
+  <div id="vrHint">
+    <div class="ico">🥽</div>
+    <div>Esto es VR real (WebXR). Ponte las gafas y pulsa el botón de gafas abajo a
+    la derecha, o el botón "Entrar en VR" que aparece arriba a la derecha dentro del
+    juego. También puedes jugar sin gafas, en el navegador, con mouse/teclado o táctil.</div>
+  </div>
+  <div id="mapGrid"></div>
+  <div id="menuFoot">
+    La barra azul es tu resistencia para correr. Si se agota justo cuando "eso" te
+    está persiguiendo, vas a tener un mal rato.
+  </div>
+</div>
+
+<div id="loadingTip"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   1. CONFIGURACIÓN Y DATOS DE MAPAS
+   ===================================================================== */
+const WALK_SPEED = 2.15;
+const RUN_SPEED  = 4.1;
+const STAMINA_MAX = 3.4;          // segundos de resistencia a máxima velocidad
+const STAMINA_REGEN = 0.55;       // por segundo, en reposo/caminando
+const PLAYER_RADIUS = 0.32;
+const CATCH_DISTANCE = 0.85;
+
+const MAPS = [
+  {
+    id: 'lluvioso', name: 'Bosque Lluvioso', swatch: '#3c6b57',
+    desc: 'Denso, húmedo y verde oscuro. Visibilidad corta por la lluvia constante.',
+    size: 70, groundColor: '#233626', skyColor: '#222c33',
+    fogColor: '#28352e', fogDensity: 0.045,
+    ambientColor: '#8fa5c0', ambientIntensity: 0.42,
+    dirColor: '#c9d8e8', dirIntensity: 0.38,
+    trunk: '#3c2c22', foliage: ['#2f5138', '#264229', '#375c3f'],
+    rock: '#4a4f55', treeCount: 210, rockCount: 26, bushCount: 40,
+    stormy: true, rainDensity: 1.0, lightningEvery: [4, 9]
+  },
+  {
+    id: 'nocturno', name: 'Bosque Nocturno', swatch: '#243257',
+    desc: 'De noche, con niebla espesa y poca luz. El acechador es casi invisible.',
+    size: 62, groundColor: '#171b24', skyColor: '#0a0d16',
+    fogColor: '#12151f', fogDensity: 0.07,
+    ambientColor: '#4a5a8a', ambientIntensity: 0.22,
+    dirColor: '#8ea0d8', dirIntensity: 0.18,
+    trunk: '#1c1712', foliage: ['#1c2a24', '#182420', '#22322a'],
+    rock: '#2b2e36', treeCount: 170, rockCount: 20, bushCount: 30,
+    stormy: false, rainDensity: 0, lightningEvery: [0,0]
+  },
+  {
+    id: 'pantano', name: 'Pantano de Niebla', swatch: '#5c6a4f',
+    desc: 'Árboles retorcidos y niebla al ras del suelo. Fácil perderse.',
+    size: 66, groundColor: '#3a3a28', skyColor: '#3a4038',
+    fogColor: '#565c48', fogDensity: 0.06,
+    ambientColor: '#a8b090', ambientIntensity: 0.5,
+    dirColor: '#d8dcc0', dirIntensity: 0.3,
+    trunk: '#4a3d28', foliage: ['#5c6a3c', '#6a7844', '#4f5c34'],
+    rock: '#5f5a48', treeCount: 190, rockCount: 30, bushCount: 55,
+    stormy: false, rainDensity: 0.35, lightningEvery: [0,0]
+  },
+  {
+    id: 'otonal', name: 'Bosque Otoñal', swatch: '#a2611f',
+    desc: 'Follaje naranja y rojo. Más despejado, pero eso te deja más expuesto.',
+    size: 74, groundColor: '#4a3a24', skyColor: '#6b5038',
+    fogColor: '#7a5c3c', fogDensity: 0.025,
+    ambientColor: '#e0b078', ambientIntensity: 0.6,
+    dirColor: '#ffb870', dirIntensity: 0.55,
+    trunk: '#4a3220', foliage: ['#a2611f', '#c47a28', '#8c4a1a'],
+    rock: '#726050', treeCount: 150, rockCount: 22, bushCount: 35,
+    stormy: false, rainDensity: 0, lightningEvery: [0,0]
+  },
+  {
+    id: 'claro', name: 'Claro Tormentoso', swatch: '#8a2020',
+    desc: 'Un claro abierto bajo tormenta eléctrica constante. Rayos frecuentes.',
+    size: 58, groundColor: '#2a2a2e', skyColor: '#15161d',
+    fogColor: '#20222c', fogDensity: 0.04,
+    ambientColor: '#7a86b0', ambientIntensity: 0.4,
+    dirColor: '#aab4e0', dirIntensity: 0.3,
+    trunk: '#241f1c', foliage: ['#2a3a2c', '#243228', '#324a34'],
+    rock: '#3a3d46', treeCount: 90, rockCount: 34, bushCount: 20,
+    stormy: true, rainDensity: 1.3, lightningEvery: [2.5, 5.5]
+  },
+  {
+    id: 'ruinas', name: 'Bosque de Ruinas', swatch: '#7a7462',
+    desc: 'Bloques de piedra antigua entre los árboles. Buenos escondites... y trampas.',
+    size: 64, groundColor: '#302c26', skyColor: '#242220',
+    fogColor: '#302c26', fogDensity: 0.05,
+    ambientColor: '#a0967e', ambientIntensity: 0.45,
+    dirColor: '#d8c8a8', dirIntensity: 0.35,
+    trunk: '#33281c', foliage: ['#3c4a34', '#333f2c', '#465440'],
+    rock: '#847c68', treeCount: 160, rockCount: 46, bushCount: 26,
+    stormy: false, rainDensity: 0.2, lightningEvery: [0,0]
+  }
+];
+
+/* =====================================================================
+   2. UTILIDADES
+   ===================================================================== */
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function randRange(rng, a, b) { return a + rng() * (b - a); }
+function randInt(rng, a, b) { return Math.floor(randRange(rng, a, b + 1)); }
+function choice(rng, arr) { return arr[Math.floor(rng() * arr.length)]; }
+function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+function dist2D(x1, z1, x2, z2) { return Math.hypot(x1 - x2, z1 - z2); }
+function lerp(a, b, t) { return a + (b - a) * t; }
+
+/* =====================================================================
+   3. GENERACIÓN DE BOSQUE (instanciado en 3D)
+   ===================================================================== */
+function disposeObject3D(obj) {
+  obj.traverse((o) => {
+    if (o.isMesh || o.isInstancedMesh) {
+      if (o.geometry) o.geometry.dispose();
+      if (o.material) {
+        if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose());
+        else o.material.dispose();
+      }
+    }
+  });
+}
+
+function buildTreeCluster(rng, count, area, spawnPoint, avoidRadius, palette) {
+  const THREE = AFRAME.THREE;
+  const group = new THREE.Group();
+  const trunkGeo = new THREE.CylinderGeometry(0.13, 0.22, 2.1, 6);
+  trunkGeo.translate(0, 1.05, 0);
+  const trunkMat = new THREE.MeshStandardMaterial({ color: palette.trunk, flatShading: true, roughness: 1 });
+  const trunkMesh = new THREE.InstancedMesh(trunkGeo, trunkMat, count);
+
+  const foliageGeos = [
+    (() => { const g = new THREE.ConeGeometry(1.15, 2.4, 6); g.translate(0, 2.75, 0); return g; })(),
+    (() => { const g = new THREE.ConeGeometry(1.0, 2.9, 5); g.translate(0, 2.95, 0); return g; })()
+  ];
+  const foliageMeshes = palette.foliage.map((col, i) => {
+    const geo = foliageGeos[i % foliageGeos.length];
+    const mat = new THREE.MeshStandardMaterial({ color: col, flatShading: true, roughness: 1 });
+    return new THREE.InstancedMesh(geo, mat, count);
+  });
+  const foliageCounts = foliageMeshes.map(() => 0);
+
+  const dummy = new THREE.Object3D();
+  const positions = [];
+  let placed = 0, attempts = 0;
+  const maxAttempts = count * 25;
+  while (placed < count && attempts < maxAttempts) {
+    attempts++;
+    const x = (rng() - 0.5) * area;
+    const z = (rng() - 0.5) * area;
+    if (dist2D(x, z, spawnPoint.x, spawnPoint.z) < avoidRadius) continue;
+    let tooClose = false;
+    for (let i = 0; i < positions.length; i++) {
+      if (dist2D(positions[i].x, positions[i].z, x, z) < 1.5) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
+    const scale = randRange(rng, 0.75, 1.35);
+    const rot = rng() * Math.PI * 2;
+    dummy.position.set(x, 0, z);
+    dummy.rotation.set(0, rot, 0);
+    dummy.scale.set(scale, scale * randRange(rng, 0.85, 1.2), scale);
+    dummy.updateMatrix();
+    trunkMesh.setMatrixAt(placed, dummy.matrix);
+    const fi = randInt(rng, 0, foliageMeshes.length - 1);
+    foliageMeshes[fi].setMatrixAt(foliageCounts[fi], dummy.matrix);
+    foliageCounts[fi]++;
+    positions.push({ x, z, r: 0.32 * scale });
+    placed++;
+  }
+  trunkMesh.count = placed;
+  trunkMesh.instanceMatrix.needsUpdate = true;
+  trunkMesh.castShadow = true;
+  group.add(trunkMesh);
+  foliageMeshes.forEach((m, i) => {
+    m.count = foliageCounts[i];
+    m.instanceMatrix.needsUpdate = true;
+    m.castShadow = true;
+    group.add(m);
+  });
+  return { group, positions };
+}
+
+function buildScatterCluster(rng, count, area, spawnPoint, avoidRadius, existing, geometry, color, minScale, maxScale, groundY) {
+  const THREE = AFRAME.THREE;
+  const mat = new THREE.MeshStandardMaterial({ color, flatShading: true, roughness: 1 });
+  const mesh = new THREE.InstancedMesh(geometry, mat, count);
+  const dummy = new THREE.Object3D();
+  let placed = 0, attempts = 0;
+  const maxAttempts = count * 20;
+  while (placed < count && attempts < maxAttempts) {
+    attempts++;
+    const x = (rng() - 0.5) * area;
+    const z = (rng() - 0.5) * area;
+    if (dist2D(x, z, spawnPoint.x, spawnPoint.z) < avoidRadius * 0.6) continue;
+    let tooClose = false;
+    for (let i = 0; i < existing.length; i++) {
+      if (dist2D(existing[i].x, existing[i].z, x, z) < existing[i].r + 0.5) { tooClose = true; break; }
+    }
+    if (tooClose) continue;
+    const scale = randRange(rng, minScale, maxScale);
+    dummy.position.set(x, groundY, z);
+    dummy.rotation.set(rng() * 0.3, rng() * Math.PI * 2, rng() * 0.3);
+    dummy.scale.set(scale, scale, scale);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(placed, dummy.matrix);
+    placed++;
+  }
+  mesh.count = placed;
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.castShadow = true;
+  return mesh;
+}
+
+function generateMapContent(mapCfg, seed) {
+  const THREE = AFRAME.THREE;
+  const rng = mulberry32(seed);
+  const spawn = { x: 0, z: 0 };
+  const root = new THREE.Group();
+
+  // suelo
+  const groundGeo = new THREE.PlaneGeometry(mapCfg.size + 40, mapCfg.size + 40, 1, 1);
+  const groundMat = new THREE.MeshStandardMaterial({ color: mapCfg.groundColor, flatShading: true, roughness: 1 });
+  const ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  root.add(ground);
+
+  // arboles
+  const trees = buildTreeCluster(rng, mapCfg.treeCount, mapCfg.size, spawn, 6.5,
+    { trunk: mapCfg.trunk, foliage: mapCfg.foliage });
+  root.add(trees.group);
+
+  // rocas
+  const rockGeo = new THREE.DodecahedronGeometry(0.55, 0);
+  const rocks = buildScatterCluster(rng, mapCfg.rockCount, mapCfg.size, spawn, 6.5,
+    trees.positions, rockGeo, mapCfg.rock, 0.6, 1.6, 0.3);
+  root.add(rocks);
+
+  // arbustos
+  const bushGeo = new THREE.IcosahedronGeometry(0.42, 0);
+  const bushColor = choice(rng, mapCfg.foliage);
+  const bushes = buildScatterCluster(rng, mapCfg.bushCount, mapCfg.size, spawn, 4.5,
+    trees.positions, bushGeo, bushColor, 0.7, 1.3, 0.35);
+  root.add(bushes);
+
+  // puntos de patrulla para el acechador (distribuidos por el mapa)
+  const patrolPoints = [];
+  const patrolCount = 6;
+  for (let i = 0; i < patrolCount; i++) {
+    const a = (i / patrolCount) * Math.PI * 2 + rng() * 0.6;
+    const r = randRange(rng, mapCfg.size * 0.22, mapCfg.size * 0.42);
+    patrolPoints.push({ x: Math.cos(a) * r, z: Math.sin(a) * r });
+  }
+
+  return {
+    root, spawn, size: mapCfg.size,
+    treePositions: trees.positions,
+    patrolPoints,
+    cfg: mapCfg
+  };
+}
+
+/* =====================================================================
+   4. ENTIDAD ACECHADORA
+   ===================================================================== */
+function buildStalkerMesh() {
+  const THREE = AFRAME.THREE;
+  const group = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color: 0x040404, flatShading: true, roughness: 1 });
+  const eyeMat = new THREE.MeshStandardMaterial({ color: 0xff2020, emissive: 0xff2020, emissiveIntensity: 1.6 });
+
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.48, 0.78, 0.26), mat);
+  torso.position.y = 1.12;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 7, 6), mat);
+  head.position.y = 1.72;
+  const eyeGeo = new THREE.SphereGeometry(0.028, 6, 6);
+  const eyeL = new THREE.Mesh(eyeGeo, eyeMat); eyeL.position.set(-0.065, 1.74, 0.185);
+  const eyeR = new THREE.Mesh(eyeGeo, eyeMat); eyeR.position.set(0.065, 1.74, 0.185);
+
+  const legGeo = new THREE.CylinderGeometry(0.085, 0.085, 0.82, 6);
+  legGeo.translate(0, -0.41, 0);
+  const legPivotL = new THREE.Group(); legPivotL.position.set(-0.13, 0.82, 0); legPivotL.name = 'legPivotL';
+  const legMeshL = new THREE.Mesh(legGeo, mat); legPivotL.add(legMeshL);
+  const legPivotR = new THREE.Group(); legPivotR.position.set(0.13, 0.82, 0); legPivotR.name = 'legPivotR';
+  const legMeshR = new THREE.Mesh(legGeo, mat); legPivotR.add(legMeshR);
+
+  const armGeo = new THREE.CylinderGeometry(0.065, 0.065, 0.66, 6);
+  armGeo.translate(0, -0.33, 0);
+  const armPivotL = new THREE.Group(); armPivotL.position.set(-0.3, 1.46, 0); armPivotL.name = 'armPivotL';
+  const armMeshL = new THREE.Mesh(armGeo, mat); armPivotL.add(armMeshL);
+  const armPivotR = new THREE.Group(); armPivotR.position.set(0.3, 1.46, 0); armPivotR.name = 'armPivotR';
+  const armMeshR = new THREE.Mesh(armGeo, mat); armPivotR.add(armMeshR);
+
+  group.add(torso, head, eyeL, eyeR, legPivotL, legPivotR, armPivotL, armPivotR);
+  group.traverse((o) => { if (o.isMesh) { o.castShadow = true; } });
+  group.userData.parts = { legPivotL, legPivotR, armPivotL, armPivotR, head };
+  return group;
+}
+
+const STALKER_PATROL_SPEED = 1.35;
+const STALKER_CHASE_SPEED = 2.85;
+const STALKER_DETECT_RADIUS = 10.5;
+const STALKER_LOSE_RADIUS = 17;
+
+function createStalkerAI(mesh) {
+  return {
+    mesh,
+    pos: { x: 0, z: 0 },
+    facing: 0,
+    state: 'patrol',          // patrol | chase
+    patrolPoints: [],
+    patrolIndex: 0,
+    loseTimer: 0,
+    alertLevel: 0,
+    walkPhase: 0,
+
+    reset(mapData) {
+      const p = choice(Math.random, mapData.patrolPoints);
+      this.pos.x = p.x; this.pos.z = p.z;
+      this.patrolPoints = mapData.patrolPoints;
+      this.patrolIndex = 0;
+      this.state = 'patrol';
+      this.alertLevel = 0;
+      this.loseTimer = 0;
+      this.mesh.position.set(this.pos.x, 0, this.pos.z);
+    },
+
+    nearestTreeAvoid(dirX, dirZ, treePositions) {
+      // evasión simple: si hay un árbol justo delante, desvía un poco
+      const lookX = this.pos.x + dirX * 1.4, lookZ = this.pos.z + dirZ * 1.4;
+      let closest = null, closestD = 1.15;
+      for (let i = 0; i < treePositions.length; i++) {
+        const t = treePositions[i];
+        const d = dist2D(lookX, lookZ, t.x, t.z);
+        if (d < closestD) { closestD = d; closest = t; }
+      }
+      if (!closest) return { x: dirX, z: dirZ };
+      const awayX = lookX - closest.x, awayZ = lookZ - closest.z;
+      const len = Math.hypot(awayX, awayZ) || 1;
+      const steerX = dirX * 0.5 + (awayX / len) * 0.8;
+      const steerZ = dirZ * 0.5 + (awayZ / len) * 0.8;
+      const l2 = Math.hypot(steerX, steerZ) || 1;
+      return { x: steerX / l2, z: steerZ / l2 };
+    },
+
+    update(dt, playerPos, mapData, onCatch) {
+      if (!mapData) return;
+      const dToPlayer = dist2D(this.pos.x, this.pos.z, playerPos.x, playerPos.z);
+
+      if (this.state === 'patrol') {
+        this.alertLevel = Math.max(0, this.alertLevel - dt * 0.6);
+        if (dToPlayer < STALKER_DETECT_RADIUS) {
+          this.state = 'chase';
+          this.loseTimer = 0;
+        } else {
+          const target = this.patrolPoints[this.patrolIndex];
+          const d = dist2D(this.pos.x, this.pos.z, target.x, target.z);
+          if (d < 1.2) {
+            this.patrolIndex = (this.patrolIndex + 1) % this.patrolPoints.length;
+          } else {
+            let dx = (target.x - this.pos.x) / d, dz = (target.z - this.pos.z) / d;
+            const steer = this.nearestTreeAvoid(dx, dz, mapData.treePositions);
+            this.pos.x += steer.x * STALKER_PATROL_SPEED * dt;
+            this.pos.z += steer.z * STALKER_PATROL_SPEED * dt;
+            this.facing = Math.atan2(steer.x, steer.z);
+          }
+        }
+      } else if (this.state === 'chase') {
+        this.alertLevel = Math.min(1, this.alertLevel + dt * 1.4);
+        if (dToPlayer > STALKER_LOSE_RADIUS) {
+          this.loseTimer += dt;
+          if (this.loseTimer > 2.5) {
+            this.state = 'patrol';
+            this.patrolIndex = 0;
+          }
+        } else {
+          this.loseTimer = 0;
+        }
+        if (dToPlayer > 0.05) {
+          let dx = (playerPos.x - this.pos.x) / dToPlayer, dz = (playerPos.z - this.pos.z) / dToPlayer;
+          const steer = this.nearestTreeAvoid(dx, dz, mapData.treePositions);
+          this.pos.x += steer.x * STALKER_CHASE_SPEED * dt;
+          this.pos.z += steer.z * STALKER_CHASE_SPEED * dt;
+          this.facing = Math.atan2(steer.x, steer.z);
+        }
+        if (dToPlayer < CATCH_DISTANCE) {
+          onCatch();
+          return;
+        }
+      }
+
+      // limites del mapa
+      const half = mapData.size / 2 - 1.5;
+      this.pos.x = clamp(this.pos.x, -half, half);
+      this.pos.z = clamp(this.pos.z, -half, half);
+
+      // aplicar transform
+      this.mesh.position.set(this.pos.x, 0, this.pos.z);
+      this.mesh.rotation.y = this.facing;
+
+      // animacion de caminata
+      const speedFactor = this.state === 'chase' ? 9 : 5.5;
+      this.walkPhase += dt * speedFactor;
+      const swing = Math.sin(this.walkPhase) * 0.55;
+      const parts = this.mesh.userData.parts;
+      parts.legPivotL.rotation.x = swing;
+      parts.legPivotR.rotation.x = -swing;
+      parts.armPivotL.rotation.x = -swing * 0.8;
+      parts.armPivotR.rotation.x = swing * 0.8;
+    }
+  };
+}
+
+/* =====================================================================
+   5. SISTEMAS DE TORMENTA: lluvia, rayos, trueno (WebAudio)
+   ===================================================================== */
+function createRainSystem(density) {
+  const THREE = AFRAME.THREE;
+  const count = Math.floor(280 * density);
+  const positions = new Float32Array(count * 3);
+  const speeds = new Float32Array(count);
+  const spread = 18;
+  for (let i = 0; i < count; i++) {
+    positions[i * 3] = randRangeSimple(-spread, spread);
+    positions[i * 3 + 1] = randRangeSimple(0, 12);
+    positions[i * 3 + 2] = randRangeSimple(-spread, spread);
+    speeds[i] = randRangeSimple(9, 14);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+  const mat = new THREE.PointsMaterial({ color: 0xaac4e8, size: 0.045, transparent: true, opacity: 0.55, depthWrite: false });
+  const points = new THREE.Points(geo, mat);
+  return { points, positions, speeds, count, spread };
+}
+function randRangeSimple(a, b) { return a + Math.random() * (b - a); }
+
+function updateRain(rain, dt, centerX, centerZ) {
+  const pos = rain.positions;
+  for (let i = 0; i < rain.count; i++) {
+    pos[i * 3 + 1] -= rain.speeds[i] * dt;
+    if (pos[i * 3 + 1] < 0) {
+      pos[i * 3] = centerX + randRangeSimple(-rain.spread, rain.spread);
+      pos[i * 3 + 1] = 12;
+      pos[i * 3 + 2] = centerZ + randRangeSimple(-rain.spread, rain.spread);
+    }
+  }
+  rain.points.geometry.attributes.position.needsUpdate = true;
+  rain.points.position.set(0, 0, 0);
+}
+
+function initAudioSystem() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const len = ctx.sampleRate * 2;
+  const buffer = ctx.createBuffer(1, len, ctx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < len; i++) data[i] = Math.random() * 2 - 1;
+  return { ctx, noiseBuffer: buffer };
+}
+function playThunder(audio) {
+  if (!audio || !audio.ctx) return;
+  const ctx = audio.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = audio.noiseBuffer;
+  const filter = ctx.createBiquadFilter();
+  filter.type = 'lowpass';
+  filter.frequency.value = 300 + Math.random() * 350;
+  const gain = ctx.createGain();
+  const now = ctx.currentTime;
+  gain.gain.setValueAtTime(0.0001, now);
+  gain.gain.exponentialRampToValueAtTime(0.85, now + 0.04);
+  gain.gain.exponentialRampToValueAtTime(0.0001, now + 1.3 + Math.random() * 0.8);
+  src.connect(filter); filter.connect(gain); gain.connect(ctx.destination);
+  src.start(now); src.stop(now + 2.1);
+}
+
+/* =====================================================================
+   6. ENTRADA
+   ===================================================================== */
+const Input = {
+  keys: {},
+  joy: { x: 0, y: 0, active: false },
+  controllerVec: { x: 0, y: 0 },
+  walkHeld: false,
+  sprintTouch: false,
+
+  vector() {
+    let x = 0, y = 0;
+    if (this.keys['KeyW'] || this.keys['ArrowUp']) y -= 1;
+    if (this.keys['KeyS'] || this.keys['ArrowDown']) y += 1;
+    if (this.keys['KeyA'] || this.keys['ArrowLeft']) x -= 1;
+    if (this.keys['KeyD'] || this.keys['ArrowRight']) x += 1;
+    if (this.joy.active) { x += this.joy.x; y += this.joy.y; }
+    if (Math.abs(this.controllerVec.x) > 0.12 || Math.abs(this.controllerVec.y) > 0.12) {
+      x += this.controllerVec.x; y += this.controllerVec.y;
+    }
+    if (this.walkHeld && x === 0 && y === 0) { y = -1; }
+    const len = Math.hypot(x, y);
+    if (len > 1) { x /= len; y /= len; }
+    return { x, y };
+  },
+  sprint() {
+    return this.keys['ShiftLeft'] || this.keys['ShiftRight'] || this.sprintTouch;
+  }
+};
+
+function setupKeyboard() {
+  window.addEventListener('keydown', (e) => {
+    Input.keys[e.code] = true;
+    if (e.code === 'Escape') Game.returnToMenu();
+  });
+  window.addEventListener('keyup', (e) => { Input.keys[e.code] = false; });
+}
+
+function setupTouchControls() {
+  const joyBase = document.getElementById('joyBase');
+  const joyStick = document.getElementById('joyStick');
+  const sprintBtn = document.getElementById('sprintBtn');
+  let joyId = null, baseRect = null;
+
+  joyBase.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    const t = e.changedTouches[0];
+    joyId = t.identifier;
+    baseRect = joyBase.getBoundingClientRect();
+    Input.joy.active = true;
+  }, { passive: false });
+  joyBase.addEventListener('touchmove', (e) => {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      e.preventDefault();
+      const cx = baseRect.left + baseRect.width / 2, cy = baseRect.top + baseRect.height / 2;
+      let dx = (t.clientX - cx) / (baseRect.width / 2), dy = (t.clientY - cy) / (baseRect.height / 2);
+      const len = Math.hypot(dx, dy);
+      if (len > 1) { dx /= len; dy /= len; }
+      Input.joy.x = dx; Input.joy.y = dy;
+      joyStick.style.transform = `translate(${dx * 32}px, ${dy * 32}px)`;
+    }
+  }, { passive: false });
+  function endJoy(e) {
+    for (const t of e.changedTouches) {
+      if (t.identifier !== joyId) continue;
+      joyId = null; Input.joy.active = false; Input.joy.x = 0; Input.joy.y = 0;
+      joyStick.style.transform = 'translate(0,0)';
+    }
+  }
+  joyBase.addEventListener('touchend', endJoy);
+  joyBase.addEventListener('touchcancel', endJoy);
+
+  sprintBtn.addEventListener('touchstart', (e) => { e.preventDefault(); Input.sprintTouch = true; sprintBtn.classList.add('active'); }, { passive: false });
+  sprintBtn.addEventListener('touchend', (e) => { e.preventDefault(); Input.sprintTouch = false; sprintBtn.classList.remove('active'); });
+  sprintBtn.addEventListener('touchcancel', () => { Input.sprintTouch = false; sprintBtn.classList.remove('active'); });
+}
+
+function setupWalkHold(sceneEl) {
+  // tocar y mantener en cualquier parte del lienzo = caminar hacia donde miras
+  // (para gafas VR sin mandos, tipo cartón)
+  const canvas = sceneEl.canvas;
+  function shouldIgnore(target) {
+    return target.closest('#joyBase') || target.closest('#sprintBtn') || target.closest('#vrEnterBtn');
+  }
+  document.addEventListener('touchstart', (e) => {
+    if (!sceneEl.is('vr-mode')) return;
+    if (shouldIgnore(e.target)) return;
+    Input.walkHeld = true;
+  }, { passive: true });
+  document.addEventListener('touchend', () => { Input.walkHeld = false; });
+  document.addEventListener('touchcancel', () => { Input.walkHeld = false; });
+}
+
+function setupControllers() {
+  const handL = document.getElementById('handL');
+  const handR = document.getElementById('handR');
+  function onAxis(e) {
+    const d = e.detail;
+    let x = 0, y = 0;
+    if (d && typeof d.x === 'number') { x = d.x; y = d.y; }
+    else if (d && d.axis && d.axis.length >= 2) { x = d.axis[0]; y = d.axis[1]; }
+    if (Math.abs(x) > 0.1 || Math.abs(y) > 0.1) { Input.controllerVec.x = x; Input.controllerVec.y = y; }
+    else { Input.controllerVec.x = 0; Input.controllerVec.y = 0; }
+  }
+  [handL, handR].forEach((h) => {
+    h.addEventListener('thumbstickmoved', onAxis);
+    h.addEventListener('axismove', onAxis);
+  });
+}
+
+/* =====================================================================
+   7. COMPONENTE PRINCIPAL DEL JUEGO
+   ===================================================================== */
+const Game = {
+  state: 'menu',           // menu | playing | caught
+  sceneEl: null,
+  rigEl: null,
+  cameraEl: null,
+  mapIndex: 0,
+  mapData: null,
+  worldRootEl: null,
+  stalkerRootEl: null,
+  stalkerMesh: null,
+  stalkerAI: null,
+  rain: null,
+  audio: null,
+  lightningTimer: 4,
+  stamina: STAMINA_MAX,
+  playerPos: { x: 0, z: 0 },
+  caughtT: 0,
+
+  returnToMenu() {
+    if (this.state === 'menu') return;
+    this.state = 'menu';
+    document.getElementById('menuScreen').style.display = 'flex';
+    document.getElementById('hud').style.display = 'none';
+    document.getElementById('mapNameTag').style.display = 'none';
+    document.getElementById('backToMenuHint').style.display = 'none';
+    document.getElementById('vrEnterBtn').style.display = 'none';
+    document.getElementById('vrWalkHint').style.display = 'none';
+    document.getElementById('touchControls').style.display = 'none';
+  },
+
+  loadMap(index) {
+    const THREE = AFRAME.THREE;
+    const cfg = MAPS[index];
+    this.mapIndex = index;
+
+    if (this.worldRootEl.object3D.children.length) {
+      this.worldRootEl.object3D.children.slice().forEach((c) => {
+        disposeObject3D(c);
+        this.worldRootEl.object3D.remove(c);
+      });
+    }
+
+    const seed = (Date.now() ^ Math.floor(Math.random() * 1e9)) >>> 0;
+    this.mapData = generateMapContent(cfg, seed);
+    this.worldRootEl.object3D.add(this.mapData.root);
+
+    this.sceneEl.setAttribute('fog', { type: 'exponential', color: cfg.fogColor, density: cfg.fogDensity });
+    document.getElementById('sky').setAttribute('color', cfg.skyColor);
+    document.getElementById('ambientLight').setAttribute('light', `type: ambient; color:${cfg.ambientColor}; intensity:${cfg.ambientIntensity}`);
+    document.getElementById('dirLight').setAttribute('light', `type: directional; color:${cfg.dirColor}; intensity:${cfg.dirIntensity}`);
+
+    this.playerPos.x = this.mapData.spawn.x;
+    this.playerPos.z = this.mapData.spawn.z;
+    this.rigEl.object3D.position.set(this.playerPos.x, 0, this.playerPos.z);
+
+    this.stalkerAI.reset(this.mapData);
+
+    if (this.rain) {
+      this.sceneEl.object3D.remove(this.rain.points);
+      this.rain = null;
+    }
+    if (cfg.stormy || cfg.rainDensity > 0) {
+      this.rain = createRainSystem(cfg.rainDensity);
+      this.sceneEl.object3D.add(this.rain.points);
+    }
+    this.lightningTimer = cfg.lightningEvery[1] > 0 ? randRangeSimple(cfg.lightningEvery[0], cfg.lightningEvery[1]) : 999999;
+
+    document.getElementById('mapNameTag').textContent = cfg.name;
+    this.stamina = STAMINA_MAX;
+    this.state = 'playing';
+    this.caughtT = 0;
+
+    document.getElementById('menuScreen').style.display = 'none';
+    document.getElementById('hud').style.display = 'block';
+    document.getElementById('mapNameTag').style.display = 'block';
+    document.getElementById('backToMenuHint').style.display = 'block';
+    document.getElementById('vrEnterBtn').style.display = 'block';
+    if (AFRAME.utils.device.isMobile()) {
+      document.getElementById('touchControls').style.display = 'block';
+      document.getElementById('vrWalkHint').style.display = 'block';
+    }
+
+    const fade = document.getElementById('fadeOverlay');
+    fade.setAttribute('visible', false);
+    fade.setAttribute('material', 'opacity', 0);
+  },
+
+  triggerCatch() {
+    if (this.state !== 'playing') return;
+    this.state = 'caught';
+    this.caughtT = 0;
+    const fade = document.getElementById('fadeOverlay');
+    fade.setAttribute('visible', true);
+    fade.setAttribute('animation__catch', {
+      property: 'material.opacity', from: 0, to: 1, dur: 650, easing: 'easeInQuad'
+    });
+    setTimeout(() => {
+      const txt = document.getElementById('caughtText');
+      const sub = document.getElementById('caughtSubText');
+      txt.setAttribute('visible', true); sub.setAttribute('visible', true);
+      txt.setAttribute('animation__c', { property: 'opacity', from: 0, to: 1, dur: 500 });
+      sub.setAttribute('animation__c', { property: 'opacity', from: 0, to: 1, dur: 500 });
+    }, 700);
+
+    setTimeout(() => { this.resetAfterCatch(); }, 2600);
+  },
+
+  resetAfterCatch() {
+    this.playerPos.x = this.mapData.spawn.x;
+    this.playerPos.z = this.mapData.spawn.z;
+    this.rigEl.object3D.position.set(this.playerPos.x, 0, this.playerPos.z);
+    this.stalkerAI.reset(this.mapData);
+    this.stamina = STAMINA_MAX;
+
+    const txt = document.getElementById('caughtText');
+    const sub = document.getElementById('caughtSubText');
+    txt.setAttribute('visible', false); sub.setAttribute('visible', false);
+
+    const fade = document.getElementById('fadeOverlay');
+    fade.setAttribute('animation__catch', {
+      property: 'material.opacity', from: 1, to: 0, dur: 900, easing: 'easeOutQuad'
+    });
+    setTimeout(() => { fade.setAttribute('visible', false); }, 950);
+    this.state = 'playing';
+  }
+};
+
+AFRAME.registerComponent('game-loop', {
+  init: function () {
+    Game.sceneEl = this.el;
+    Game.rigEl = document.getElementById('rig');
+    Game.cameraEl = document.getElementById('camera');
+    Game.worldRootEl = document.getElementById('worldRoot');
+    Game.stalkerRootEl = document.getElementById('stalkerRoot');
+
+    Game.stalkerMesh = buildStalkerMesh();
+    Game.stalkerRootEl.object3D.add(Game.stalkerMesh);
+    Game.stalkerAI = createStalkerAI(Game.stalkerMesh);
+
+    setupKeyboard();
+    setupTouchControls();
+    setupWalkHold(this.el);
+    setupControllers();
+    buildMenu();
+
+    document.getElementById('vrEnterBtn').addEventListener('click', () => {
+      this.el.enterVR();
+    });
+  },
+
+  tick: function (time, delta) {
+    const dt = Math.min(delta / 1000, 0.05) || 0.016;
+    const g = Game;
+
+    if (g.state === 'playing') {
+      this.updateMovement(dt);
+      g.stalkerAI.update(dt, g.playerPos, g.mapData, () => g.triggerCatch());
+      this.updateVignette(dt);
+      this.updateHUD();
+    }
+    if (g.state === 'playing' || g.state === 'caught') {
+      if (g.rain) updateRain(g.rain, dt, g.playerPos.x, g.playerPos.z);
+      if (g.mapData && g.mapData.cfg.lightningEvery[1] > 0) {
+        g.lightningTimer -= dt;
+        if (g.lightningTimer <= 0) {
+          this.flashLightning();
+          g.lightningTimer = randRangeSimple(g.mapData.cfg.lightningEvery[0], g.mapData.cfg.lightningEvery[1]);
+        }
+      }
+    }
+  },
+
+  updateMovement: function (dt) {
+    const g = Game;
+    const input = Input.vector();
+    const wantsMove = input.x !== 0 || input.y !== 0;
+    const sprinting = Input.sprint() && g.stamina > 0 && wantsMove;
+
+    if (sprinting) g.stamina = Math.max(0, g.stamina - dt);
+    else g.stamina = Math.min(STAMINA_MAX, g.stamina + dt * STAMINA_REGEN);
+
+    if (!wantsMove) return;
+    const speed = sprinting ? RUN_SPEED : WALK_SPEED;
+
+    const camObj = g.cameraEl.object3D;
+    const forward = new AFRAME.THREE.Vector3();
+    camObj.getWorldDirection(forward);
+    forward.y = 0; forward.normalize();
+    const right = new AFRAME.THREE.Vector3(forward.z, 0, -forward.x);
+
+    let nx = g.playerPos.x + (forward.x * -input.y + right.x * input.x) * speed * dt;
+    let nz = g.playerPos.z + (forward.z * -input.y + right.z * input.x) * speed * dt;
+
+    if (g.mapData) {
+      for (const t of g.mapData.treePositions) {
+        const d = dist2D(nx, nz, t.x, t.z);
+        const minD = t.r + PLAYER_RADIUS + 0.15;
+        if (d < minD && d > 0.0001) {
+          const push = (minD - d);
+          nx += ((nx - t.x) / d) * push;
+          nz += ((nz - t.z) / d) * push;
+        }
+      }
+      const half = g.mapData.size / 2 - 1.5;
+      nx = clamp(nx, -half, half);
+      nz = clamp(nz, -half, half);
+    }
+
+    g.playerPos.x = nx; g.playerPos.z = nz;
+    g.rigEl.object3D.position.set(nx, 0, nz);
+  },
+
+  updateVignette: function (dt) {
+    const g = Game;
+    const vign = document.getElementById('vignette');
+    const level = g.stalkerAI.alertLevel;
+    if (level > 0.02) {
+      vign.setAttribute('visible', true);
+      vign.setAttribute('material', 'opacity', level * 0.5);
+    } else {
+      vign.setAttribute('visible', false);
+    }
+  },
+
+  updateHUD: function () {
+    const bar = document.getElementById('staminaBar');
+    const s = Game.stamina / STAMINA_MAX;
+    bar.style.width = (s * 100) + '%';
+    bar.style.background = s < 0.25 ? '#c85c5c' : 'linear-gradient(90deg,#7fb2ff,#c8d9ff)';
+  },
+
+  flashLightning: function () {
+    const dl = document.getElementById('dirLight');
+    const cfgIntensity = Game.mapData.cfg.dirIntensity;
+    dl.setAttribute('animation__flash', {
+      property: 'light.intensity', from: cfgIntensity, to: cfgIntensity + 2.2, dur: 90, dir: 'alternate', loop: 2, easing: 'easeOutQuad'
+    });
+    if (Game.audio) {
+      setTimeout(() => playThunder(Game.audio), 150 + Math.random() * 700);
+    }
+  }
+});
+
+/* =====================================================================
+   8. INTERFAZ
+   ===================================================================== */
+function buildMenu() {
+  const grid = document.getElementById('mapGrid');
+  grid.innerHTML = '';
+  MAPS.forEach((cfg, i) => {
+    const card = document.createElement('div');
+    card.className = 'mapCard';
+    card.innerHTML = `<h3><span class="swatch" style="background:${cfg.swatch}"></span>${cfg.name}</h3><p>${cfg.desc}</p>`;
+    card.addEventListener('click', () => {
+      if (!Game.audio) Game.audio = initAudioSystem();
+      Game.loadMap(i);
+    });
+    grid.appendChild(card);
+  });
+}
+</script>
+</body>
+</html>
